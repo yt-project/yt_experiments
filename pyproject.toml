@@ -1,0 +1,87 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yt_experiments"
+version = "0.1.0"
+authors = [
+  { name="The yt project", email="yt-dev@python.org"},
+]
+description="A repository containing some experimental packages and enhancements "
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "License :: OSI Approved :: BSD License",
+]
+dependencies=['yt>4.2.0',]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+
+[project.urls]
+"Homepage" = "https://github.com/yt-project/yt_experiments"
+"Bug Tracker" = "https://github.com/yt-project/yt_experiments/issues"
+
+[project.license]
+text = "BSD 3-Clause"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=6.1",
+]
+
+[tool.pytest.ini_options]
+addopts = '''
+    -s
+    -v
+    -rsfE
+
+'''
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+exclude = '''
+/(
+    \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | build
+  | dist
+)/
+'''
+
+[tool.ruff]
+extend-include = ["*.ipynb"]
+exclude = [
+    "doc",
+]
+select = [
+    "E",
+    "F",
+    "W",
+    "C4",   # flake8-comprehensions
+    "B",    # flake8-bugbear
+    "G",    # flake8-logging-format
+    "YTT",  # flake8-2020
+    "UP",   # pyupgrade
+    "I",    # isort
+    "NPY",  # numpy specific rules
+]
+ignore = [
+    "E501",  # line too long
+    "B018",  # Found useless expression. # disabled because ds.index is idiomatic
+]
+
+[tool.ruff.isort]
+combine-as-imports = true
