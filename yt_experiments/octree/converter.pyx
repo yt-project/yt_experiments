@@ -146,11 +146,12 @@ cdef class OctTree:
         ... oct = OctTree.from_list(xyz, levels, check=True)
         ... ref_mask, leaf_order = oct.get_refmask()
         ... ref_mask, leaf_order
-        (array([8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=uint8),
+        (array([1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=uint8),
          array([ 1, -1, -1, -1,  0, -1, -1,  2, -1, -1, -1, -1, -1, -1,  3],
              dtype=int32))
         >>> for k, v in data.items():
-        ...     data[k] = np.where(leaf_order >= 0, v[leaf_order], np.nan)
+        ...     # Make it 2D so that yt doesn't think those are particles
+        ...     data[k] = np.where(leaf_order >= 0, v[leaf_order], np.nan)[:, None]
         ...
         ... ds = yt.load_octree(ref_mask, data)
         """
@@ -233,9 +234,9 @@ cdef class OctTree:
         cdef np.int32_t[:] leaf_order_view = np.zeros(leaf_order.size(), dtype=np.int32)
 
         cdef size_t i
-        ref_mask_view[0] = 8
+        ref_mask_view[0] = 1
         for i in range(ref_mask.size()):
-            ref_mask_view[i + 1] = ref_mask[i] * 8
+            ref_mask_view[i + 1] = ref_mask[i]
         for i in range(leaf_order.size()):
             leaf_order_view[i] = leaf_order[i]
         return np.asarray(ref_mask_view), np.asarray(leaf_order_view)
