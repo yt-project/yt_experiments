@@ -1,4 +1,5 @@
 # distutils: language = c++
+# distutils: define_macros=NPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
 
 cimport numpy as np
 from libc.stdlib cimport malloc
@@ -31,7 +32,7 @@ cdef class OctTree:
         self.count = 1
 
     @cython.boundscheck(False)
-    cdef Oct* add(self, const double[::1] x, const int level, const int unique_index, const bint check = False) except NULL:
+    cdef Oct* add(self, const double[::1] x, const int level, const int unique_index, bint check = False) except NULL:
         """Add a cell to the octree.
 
         Parameters
