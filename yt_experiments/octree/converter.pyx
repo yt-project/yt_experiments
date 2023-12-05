@@ -109,7 +109,7 @@ cdef class OctTree:
 
     @classmethod
     @cython.boundscheck(False)
-    def from_list(cls, const double[:, ::1] Xc, const int[::1] levels):
+    def from_list(cls, const double[:, ::1] Xc, const int[::1] levels, check = False):
         """Create an octree from a list of cells.
 
         Parameters
@@ -118,11 +118,41 @@ cdef class OctTree:
             The positions of the cells in unitary units (within [0, 1])
         levels : int array (N,)
             The levels of the cells. It should be such that Xc * 2**levels is an integer
+        check : bool, optional
+            If True, make sure that the position obtained by going down the octree matches
+            the cell position.
 
         Returns
         -------
         OctTree
             The octree.
+
+        Examples
+        --------
+        >>> import numpy as np
+        ... import yt
+        ... from yt_experiments.octree.converter import OctTree
+        ... xyz = np.array([
+        ...     [0.375, 0.125, 0.125],
+        ...     [0.125, 0.125, 0.125],
+        ...     [0.375, 0.375, 0.375],
+        ...     [0.75, 0.75, 0.75],
+        ... ])
+        ... levels = np.array([2, 2, 2, 1], dtype=np.int32)
+        ... data = {
+        ...     ("gas", "density"): np.random.rand(4)
+        ... }
+        ...
+        ... oct = OctTree.from_list(xyz, levels, check=True)
+        ... ref_mask, leaf_order = oct.get_refmask()
+        ... ref_mask, leaf_order
+        (array([8, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], dtype=uint8),
+         array([ 1, -1, -1, -1,  0, -1, -1,  2, -1, -1, -1, -1, -1, -1,  3],
+             dtype=int32))
+        >>> for k, v in data.items():
+        ...     data[k] = np.where(leaf_order >= 0, v[leaf_order], np.nan)
+        ...
+        ... ds = yt.load_octree(ref_mask, data)
         """
         cdef int i
 
@@ -130,7 +160,7 @@ cdef class OctTree:
 
         cdef OctTree tree = cls()
         for i in range(Xc.shape[0]):
-            node = tree.add(Xc[i], levels[i], i)
+            node = tree.add(Xc[i], levels[i], i, check=check)
 
         return tree
 
