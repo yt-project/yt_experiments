@@ -74,10 +74,12 @@ cdef class OctTree:
                 f"{x[0]}, {x[1]}, {x[2]}, got {node.x}, {node.y}, {node.z} @ level {level}"
             )
 
-        if node.ind != -1:
+        if node.ind != unique_index:
             raise ValueError(
                 "Node ind already set. Make sure that the same cell is not added twice."
             )
+
+        return node
 
     @cython.boundscheck(False)
     cdef Oct* add(self, const double[3] x, const int level, const int unique_index) noexcept:
@@ -133,7 +135,8 @@ cdef class OctTree:
 
             node = node.children[ind]
 
-        node.ind = unique_index
+        if node.ind == -1:
+            node.ind = unique_index
         return node
 
     @classmethod
