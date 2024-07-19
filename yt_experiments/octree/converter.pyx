@@ -3,10 +3,22 @@
 
 cimport numpy as np
 from libc.stdlib cimport malloc
-from libcpp.vector cimport vector
+# from libcpp.vector cimport vector
 
 import cython
 import numpy as np
+
+
+# Minimal requirements, adapted from cython's libcpp/vector.pxd
+cdef extern from "<vector>" namespace "std" nogil:
+    cdef cppclass vector[T,ALLOCATOR=*]:
+        ctypedef size_t size_type
+
+        vector() except +
+        T& operator[](size_type)
+        void reserve(size_type) except +
+        void push_back(T&)
+        size_type size()
 
 
 cdef struct Oct:
@@ -32,20 +44,53 @@ cdef class OctTree:
         self.count = 1
 
     @cython.boundscheck(False)
-    cdef Oct* add(self, const double[::1] x, const int level, const int unique_index, bint check = False) except NULL:
-        """Add a cell to the octree.
+    cdef Oct* add_check(self, const double[3] x, const int level, const int unique_index) except NULL:
+        """Add a cell to the octree and verify that the the position obtained by going down the
+        octree matches the cell position.
 
         Parameters
         ----------
-        x : double array (3,)
+        x : double[3]
             The position of the cell in unitary units (within [0, 1])
         level : int
             The level of the cell. It should be such that x * 2**level is an integer
         unique_index : int
             A unique index for the cell.
-        check : bool, optional
-            If True, make sure that the position obtained by going down the octree matches
-            the cell position.
+
+        Returns
+        -------
+        Oct*
+            The node in the tree at the cell location.
+        """
+        cdef Oct* node = self.add(x, level, unique_index)
+
+        if (
+            not np.isclose(node.x, x[0]) or
+            not np.isclose(node.y, x[1]) or
+            not np.isclose(node.z, x[2])
+        ):
+            raise ValueError(
+                "Node xc does not match. Expected "
+                f"{x[0]}, {x[1]}, {x[2]}, got {node.x}, {node.y}, {node.z} @ level {level}"
+            )
+
+        if node.ind != -1:
+            raise ValueError(
+                "Node ind already set. Make sure that the same cell is not added twice."
+            )
+
+    @cython.boundscheck(False)
+    cdef Oct* add(self, const double[3] x, const int level, const int unique_index) noexcept:
+        """Add a cell to the octree.
+
+        Parameters
+        ----------
+        x : double[3]
+            The position of the cell in unitary units (within [0, 1])
+        level : int
+            The level of the cell. It should be such that x * 2**level is an integer
+        unique_index : int
+            A unique index for the cell.
 
         Returns
         -------
@@ -88,28 +133,12 @@ cdef class OctTree:
 
             node = node.children[ind]
 
-        if check:
-            if (
-                not np.isclose(node.x, x[0]) or
-                not np.isclose(node.y, x[1]) or
-                not np.isclose(node.z, x[2])
-            ):
-                raise ValueError(
-                    "Node xc does not match. Expected "
-                    f"{x[0]}, {x[1]}, {x[2]}, got {node.x}, {node.y}, {node.z} @ level {level}"
-                )
-
-        if node.ind != -1:
-            raise ValueError(
-                "Node ind already set. Make sure that the same cell is not added twice."
-            )
-
         node.ind = unique_index
         return node
 
     @classmethod
     @cython.boundscheck(False)
-    def from_list(cls, const double[:, ::1] Xc, const int[::1] levels, check = False):
+    def from_list(cls, const cython.floating[:, ::1] Xc, const cython.integral[::1] levels, bint check = False):
         """Create an octree from a list of cells.
 
         Parameters
@@ -160,8 +189,15 @@ cdef class OctTree:
         cdef Oct* node
 
         cdef OctTree tree = cls()
+        cdef double[3] x
         for i in range(Xc.shape[0]):
-            node = tree.add(Xc[i], levels[i], i, check=check)
+            x[0] = Xc[i, 0]
+            x[1] = Xc[i, 1]
+            x[2] = Xc[i, 2]
+            if check:
+                node = tree.add_check(x, levels[i], i)
+            else:
+                node = tree.add(x, levels[i], i)
 
         return tree
 
