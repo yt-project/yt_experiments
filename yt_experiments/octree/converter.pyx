@@ -2,7 +2,7 @@
 # distutils: define_macros=NPY_NO_DEPRECATED_API=NPY_1_7_API_VERSION
 
 cimport numpy as np
-from libc.stdlib cimport malloc
+from libc.stdlib cimport malloc, free
 
 import cython
 import numpy as np
@@ -41,6 +41,19 @@ cdef class OctTree:
         self.root.children = NULL
         self.root.ind = -1
         self.count = 1
+
+    def __del__(self):
+        self.deallocate(self.root)
+
+    cdef void deallocate(self, Oct* node):
+        """Deallocate the memory of the octree."""
+        cdef int i
+        if node.children != NULL:
+            for i in range(8):
+                if node.children[i] != NULL:
+                    self.deallocate(node.children[i])
+            free(node.children)
+        free(node)
 
     @cython.boundscheck(False)
     cdef Oct* add_check(self, const double[3] x, const int level, const int unique_index) except NULL:
