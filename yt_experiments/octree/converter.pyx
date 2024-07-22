@@ -65,7 +65,7 @@ cdef class OctTree:
         x : double[3]
             The position of the cell in unitary units (within [0, 1])
         level : int
-            The level of the cell. It should be such that x * 2**level is an integer
+            The level of the cell. It should be such that x * 2**level is a half-integer
         unique_index : int
             A unique index for the cell.
 
@@ -102,7 +102,7 @@ cdef class OctTree:
         x : double[3]
             The position of the cell in unitary units (within [0, 1])
         level : int
-            The level of the cell. It should be such that x * 2**level is an integer
+            The level of the cell. It should be such that x * 2**level is a half-integer
         unique_index : int
             A unique index for the cell.
 
@@ -161,7 +161,7 @@ cdef class OctTree:
         Xc : double array (N, 3)
             The positions of the cells in unitary units (within [0, 1])
         levels : int array (N,)
-            The levels of the cells. It should be such that Xc * 2**levels is an integer
+            The levels of the cells. It should be such that Xc * 2**levels are half-integers.
         check : bool, optional
             If True, make sure that the position obtained by going down the octree matches
             the cell position.
