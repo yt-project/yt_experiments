@@ -3,7 +3,6 @@
 
 cimport numpy as np
 from libc.stdlib cimport malloc
-# from libcpp.vector cimport vector
 
 import cython
 import numpy as np
@@ -45,7 +44,7 @@ cdef class OctTree:
 
     @cython.boundscheck(False)
     cdef Oct* add_check(self, const double[3] x, const int level, const int unique_index) except NULL:
-        """Add a cell to the octree and verify that the the position obtained by going down the
+        """Add a cell to the octree and verify that the position obtained by going down the
         octree matches the cell position.
 
         Parameters
