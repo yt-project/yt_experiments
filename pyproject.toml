@@ -38,6 +38,11 @@ text = "BSD 3-Clause"
 test = [
     "pytest>=6.1",
 ]
+full = [
+    "xarray",
+    "zarr",
+    "dask[array,distributed]"
+]
 
 [tool.setuptools]
 packages = ["yt_experiments"]
