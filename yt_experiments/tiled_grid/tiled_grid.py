@@ -129,11 +129,12 @@ class YTTiledArbitraryGrid:
             full_domain[self._grid_slc[igrid]] = vals
         return full_domain
 
-    def to_zarr(self,
-                field,
-                base_path: str,
-                ops = None
-                ):
+    def to_zarr(
+        self,
+        field,
+        base_path: str,
+        ops=None,
+    ):
 
         shape = self.dims
         chunks = self.nchunks
@@ -142,18 +143,18 @@ class YTTiledArbitraryGrid:
             ops = []
 
         import os
+
         import zarr
 
         fld_str = "_".join(field)
-        fpath = os.path.join(base_path, fld_str + '.zarr')
-        full_domain = zarr.open(fpath, mode='w', shape=shape,
-                       chunks=chunks, dtype=dtype)
+        fpath = os.path.join(base_path, fld_str + ".zarr")
+        full_domain = zarr.open(
+            fpath, mode="w", shape=shape, chunks=chunks, dtype=dtype
+        )
 
         for igrid in range(self._ngrids):
             le, re, shp = self._grids[igrid]
-            vals = _get_filled_grid(
-                le, re, shp, field, self.ds, self.field_parameters
-            )
+            vals = _get_filled_grid(le, re, shp, field, self.ds, self.field_parameters)
             slc = self._grid_slc[igrid]
             for op in ops:
                 vals = op(vals)
@@ -161,59 +162,60 @@ class YTTiledArbitraryGrid:
 
         return full_domain
 
+
 class YTPyramid:
     def __init__(
-            self,
-            left_edge,
-            right_edge,
-            dims: tuple[int, int, int],
-            nchunks: int,
-            n_levels: int,
-            factor: int = 2,
-            ds: Dataset = None,
-            field_parameters=None,
-            parallel_method: Optional[str] = None,
-            data_source: Optional[Any] = None,
-            cache: Optional[bool] = False,
+        self,
+        left_edge,
+        right_edge,
+        dims: tuple[int, int, int],
+        nchunks: int,
+        n_levels: int,
+        factor: int = 2,
+        ds: Dataset = None,
+        field_parameters=None,
+        parallel_method: Optional[str] = None,
+        data_source: Optional[Any] = None,
+        cache: Optional[bool] = False,
     ):
 
         levels = []
-        dims_ = np.array(dims,dtype=int)
-
+        dims_ = np.array(dims, dtype=int)
+        n_chunks_lev = nchunks
         for lev in range(n_levels):
             current_dims = dims_ / factor**lev
-            print(current_dims)
+            if lev > 0:
+                n_chunks_lev = int(n_chunks_lev / factor)
+            print(f"{current_dims} in {n_chunks_lev}")
             tag = YTTiledArbitraryGrid(
                 left_edge,
                 right_edge,
                 current_dims,
-                int(nchunks/(lev+1)),
+                n_chunks_lev,
                 ds=ds,
-                field_parameters =field_parameters,
+                field_parameters=field_parameters,
                 data_source=data_source,
             )
             levels.append(tag)
 
         self._levels = levels
 
-    def to_zarr(self,
-                field,
-                base_path: str,
-                ops=None
-                ):
+    def to_zarr(self, field, base_path: str, ops=None):
 
         import os
+
         vals = []
         for lev, tag in enumerate(self._levels):
             print(f"writing level {lev}")
             lev_path = os.path.join(base_path, str(lev))
-            vals.append(tag.to_zarr(field,
-                        lev_path,
-                        ops=ops,
-                        ))
+            vals.append(
+                tag.to_zarr(
+                    field,
+                    lev_path,
+                    ops=ops,
+                )
+            )
         return vals
-
-
 
 
 def _get_filled_grid(le, re, shp, field, ds, field_parameters):
