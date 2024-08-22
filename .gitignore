@@ -160,3 +160,5 @@ cython_debug/
 .idea/
 
 yt_experiments/octree/converter.cpp
+
+*.zarr
