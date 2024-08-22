@@ -4,22 +4,39 @@ import numpy as np
 import xarray as xr
 from yt.data_objects.construction_data_containers import YTArbitraryGrid
 from yt.data_objects.static_output import Dataset
-from yt.utilities.decompose import get_psize, split_array
 
 
 class YTTiledArbitraryGrid:
+
+    _ndim = 3
+
     def __init__(
         self,
         left_edge,
         right_edge,
         dims: tuple[int, int, int],
-        nchunks: int,
+        chunks: int | tuple[int, int, int],
+        *,
         ds: Dataset = None,
         field_parameters=None,
         parallel_method: Optional[str] = None,
         data_source: Optional[Any] = None,
-        cache: Optional[bool] = False,
     ):
+        """
+
+        Parameters
+        ----------
+        left_edge
+        right_edge
+        dims
+        chunks
+            chunk size (or sizes in each dimension), not number of chunks
+        ds
+        field_parameters
+        parallel_method
+        data_source
+
+        """
         self.left_edge = left_edge
         self.right_edge = right_edge
         self.ds = ds
@@ -27,50 +44,70 @@ class YTTiledArbitraryGrid:
         self.field_parameters = field_parameters
         self.parallel_method = parallel_method
         self.dims = dims
-        self.nchunks = nchunks
-        self._psize = get_psize(np.array(dims), nchunks)
+        if isinstance(chunks, int):
+            chunks = (chunks,) * self._ndim
+        self.chunks = chunks
+
+        nchunks = self._dims / self._chunks
+        if np.any(np.mod(nchunks, nchunks.astype(int)) != 0):
+            msg = (
+                "The dimensions and chunks provide result in partially filled "
+                f"chunks, which is not supported at this time: {nchunks}"
+            )
+            raise NotImplementedError(msg)
+        self.nchunks = nchunks.astype(int)
+
+        self.dds = (self.right_edge - self.left_edge) / self._dims
+
         self._grids: list[YTArbitraryGrid] = []
         self._grid_slc: list[tuple[slice, slice, slice]] = []
-        self.chunks = None
-        self._get_grids()
-        self._ngrids = len(self._grids)
-        self.dds = (self.right_edge - self.left_edge) / self.dims
-
-        self.cache = cache
+        self._ngrids = np.prod(self.nchunks)
         self._left_cell_center = self.left_edge + self.dds / 2.0
         self._right_cell_center = self.right_edge - self.dds / 2.0
 
-    def _get_grids(self):
-        # initialize the arbitrary grid args. not optimal cause we need to
-        # do two passes: first to get the grids then to parse in the expected
-        # form for dask chunks.
-        grid_list = split_array(self.left_edge, self.right_edge, self.dims, self._psize)
-        n_grids = len(grid_list[0])
+    @property
+    def _chunks(self):
+        return np.array(self.chunks, dtype=int)
 
-        # also record the chunks in the way dask expects them
-        le_chunks = [[] for _ in range(3)]
-        re_chunks = [[] for _ in range(3)]
+    @property
+    def _dims(self):
+        return np.array(self.dims, dtype=int)
 
-        for igrid in range(n_grids):
-            le = grid_list[0][igrid]
-            re = grid_list[1][igrid]
-            shp = grid_list[2][igrid]
-            slc = grid_list[3][igrid]
-            self._grids.append((le, re, shp))
-            self._grid_slc.append(slc)
-            for idim in range(3):
-                le_chunks[idim].append(slc[idim].start)
-                re_chunks[idim].append(slc[idim].stop)
+    def _get_grid(self, igrid: int):
+        # get grid extent of a **single** grid
 
-        le_chunks = np.array(le_chunks, dtype=int)
-        re_chunks = np.array(re_chunks, dtype=int)
+        chunksizes = self._chunks
 
-        chunks = []
-        for idim in range(3):
-            le_idim = np.unique(le_chunks[idim, :])
-            re_idim = np.unique(re_chunks[idim, :])
-            chunks.append(tuple(re_idim - le_idim))
-        self.chunks = tuple(chunks)
+        # get the left/right index and value of this grid
+        ijk_grid = np.unravel_index(igrid, self.nchunks)
+        le_index = []
+        re_index = []
+        le_val = []
+        re_val = []
+        for idim in range(self._ndim):
+            chunk_i = ijk_grid[idim]
+            lei = chunk_i * chunksizes[idim]
+            rei = lei + chunksizes[idim]
+            lei_val = self.left_edge[idim] + self.dds[idim] * lei
+            rei_val = lei_val + self.dds[idim] * chunksizes[idim]
+            le_index.append(lei)
+            re_index.append(rei)
+            le_val.append(lei_val)
+            re_val.append(rei_val)
+
+        slc = np.s_[
+            le_index[0] : re_index[0],
+            le_index[1] : re_index[1],
+            le_index[2] : re_index[2],
+        ]
+
+        le_index = np.array(le_index, dtype=int)
+        re_index = np.array(re_index, dtype=int)
+        le_val = np.array(le_val)
+        re_val = np.array(re_val)
+        shape = chunksizes
+
+        return le_index, re_index, le_val, re_val, slc, shape
 
     def to_dask(self, field, chunks=None):
         from dask import array as da, delayed
@@ -80,7 +117,7 @@ class YTTiledArbitraryGrid:
 
         full_domain = da.empty(self.dims, chunks=chunks, dtype="float64")
         for igrid in range(self._ngrids):
-            le, re, shp = self._grids[igrid]
+            _, _, le, re, slc, shp = self._get_grid(igrid)
             vals = delayed(_get_filled_grid)(
                 le, re, shp, field, self.ds, self.field_parameters
             )
@@ -100,7 +137,7 @@ class YTTiledArbitraryGrid:
         if backend == "dask":
             da = self.to_dask(field, chunks=chunks)
         elif backend == "numpy":
-            da = self.to_numpy(field)
+            da = self.to_array(field)
         else:
             raise NotImplementedError()
 
@@ -119,103 +156,181 @@ class YTTiledArbitraryGrid:
         )
         return xr_ds
 
-    def to_numpy(self, field):
-        # get a full, in-mem np array. if you can use this
-        # why not just use a YTArbitraryGrid though...
-        full_domain = np.empty(self.dims, dtype="float64")
+    def single_grid_values(self, igrid, field, *, ops=None):
+        if ops is None:
+            ops = []
+        _, _, le, re, slc, shp = self._get_grid(igrid)
+        vals = _get_filled_grid(le, re, shp, field, self.ds, self.field_parameters)
+        for op in ops:
+            vals = op(vals)
+        return vals, slc
+
+    def to_array(
+        self,
+        field,
+        *,
+        full_domain=None,
+        ops=None,
+    ):
+        """
+        Sample the field for each grid in the tiled grid set.
+
+        Parameters
+        ----------
+        field
+            the field to sample
+        full_domain
+            the array to fill. if not provided, defaults to an empty
+            np array. Can provide a numpy or zarr array.
+        ops
+            an optional list of callback functions to apply to the
+            sampled field. Must accept a single parameter, the values
+            of the sampled field for each grid, and return the modified
+            values of the grid. Operations are by-grid. For example:
+
+                def my_func(values):
+                    modified_values = np.abs(values)
+                    return modified_values
+
+
+        Returns
+        -------
+        array
+            a filled array
+
+        """
+        if full_domain is None:
+            full_domain = np.empty(self.dims, dtype="float64")
+        if ops is None:
+            ops = []
+
         for igrid in range(self._ngrids):
-            le, re, shp = self._grids[igrid]
-            vals = _get_filled_grid(le, re, shp, field, self.ds, self.field_parameters)
-            full_domain[self._grid_slc[igrid]] = vals
+            vals, slc = self.single_grid_values(igrid, field, ops=ops)
+            full_domain[slc] = vals
         return full_domain
 
     def to_zarr(
         self,
         field,
-        base_path: str,
+        zarr_store,
+        *,
+        zarr_name: str | None = None,
         ops=None,
+        **kwargs,
     ):
+        """
+        write to a zarr Store or Group
 
-        shape = self.dims
-        chunks = self.nchunks
+        Parameters
+        ----------
+        field
+        zarr_store
+        zarr_name
+        ops
+        kwargs
+            passed to the empty zarr array creation
+
+        Returns
+        -------
+
+        """
+
+        import zarr
+
+        _allowed_types = (zarr.storage.Store, zarr.hierarchy.Group)
+        if not isinstance(zarr_store, _allowed_types):
+            raise TypeError(
+                "zarr_store must be a zarr `Store` or `Group` but has "
+                f"type of {type(zarr_store)}."
+            )
+
         dtype = np.float64
         if ops is None:
             ops = []
 
-        import os
+        if zarr_name is None:
+            zarr_name = "_".join(field)
 
-        import zarr
-
-        fld_str = "_".join(field)
-        fpath = os.path.join(base_path, fld_str + ".zarr")
-        full_domain = zarr.open(
-            fpath, mode="w", shape=shape, chunks=chunks, dtype=dtype
+        full_domain = zarr_store.empty(
+            zarr_name, shape=self.dims, chunks=self.chunks, dtype=dtype, **kwargs
         )
-
-        for igrid in range(self._ngrids):
-            le, re, shp = self._grids[igrid]
-            vals = _get_filled_grid(le, re, shp, field, self.ds, self.field_parameters)
-            slc = self._grid_slc[igrid]
-            for op in ops:
-                vals = op(vals)
-            full_domain[slc] = vals
-
+        full_domain = self.to_array(field, full_domain=full_domain, ops=ops)
         return full_domain
 
 
 class YTPyramid:
+    _ndim = 3
+
     def __init__(
         self,
         left_edge,
         right_edge,
         dims: tuple[int, int, int],
-        nchunks: int,
+        chunks: int | tuple[int, int, int],
         n_levels: int,
         factor: int = 2,
         ds: Dataset = None,
         field_parameters=None,
-        parallel_method: Optional[str] = None,
         data_source: Optional[Any] = None,
-        cache: Optional[bool] = False,
     ):
 
         levels = []
         dims_ = np.array(dims, dtype=int)
-        n_chunks_lev = nchunks
+        if isinstance(chunks, int):
+            chunks = (chunks,) * self._ndim
+        chunksizes = np.array(chunks, dtype=int)
+
         for lev in range(n_levels):
             current_dims = dims_ / factor**lev
-            if lev > 0:
-                n_chunks_lev = int(n_chunks_lev / factor)
-            print(f"{current_dims} in {n_chunks_lev}")
+            n_chunks_lev = int(np.prod(current_dims / chunksizes))
+            print(
+                f"Decomposing {current_dims} into {n_chunks_lev} chunks for level {lev}"
+            )
             tag = YTTiledArbitraryGrid(
                 left_edge,
                 right_edge,
                 current_dims,
-                n_chunks_lev,
+                chunksizes,
                 ds=ds,
                 field_parameters=field_parameters,
                 data_source=data_source,
             )
             levels.append(tag)
 
-        self._levels = levels
+        self.levels: [YTTiledArbitraryGrid] = levels
 
-    def to_zarr(self, field, base_path: str, ops=None):
+    def to_zarr(
+        self,
+        field,
+        zarr_store,
+        zarr_name: str | None = None,
+        ops=None,
+    ):
+        import zarr
 
-        import os
-
-        vals = []
-        for lev, tag in enumerate(self._levels):
-            print(f"writing level {lev}")
-            lev_path = os.path.join(base_path, str(lev))
-            vals.append(
-                tag.to_zarr(
-                    field,
-                    lev_path,
-                    ops=ops,
-                )
+        _allowed_types = (zarr.storage.Store, zarr.hierarchy.Group)
+        if not isinstance(zarr_store, _allowed_types):
+            raise TypeError(
+                "zarr_store must be a zarr `Store` or `Group` but has "
+                f"type of {type(zarr_store)}."
             )
-        return vals
+
+        if zarr_name is None:
+            zarr_name = "_".join(field)
+
+        if zarr_name not in zarr_store:
+            zarr_store.create_group(zarr_name)
+
+        field_store = zarr_store[zarr_name]
+
+        for lev, tag in enumerate(self.levels):
+            print(f"writing level {lev}")
+            tag.to_zarr(
+                field,
+                field_store,
+                zarr_name=str(lev),
+                ops=ops,
+            )
 
 
 def _get_filled_grid(le, re, shp, field, ds, field_parameters):
