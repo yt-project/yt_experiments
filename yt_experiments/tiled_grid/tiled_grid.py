@@ -171,6 +171,7 @@ class YTTiledArbitraryGrid:
         *,
         full_domain=None,
         ops=None,
+        dtype=None,
     ):
         """
         Sample the field for each grid in the tiled grid set.
@@ -204,9 +205,12 @@ class YTTiledArbitraryGrid:
         if ops is None:
             ops = []
 
+        if dtype is None:
+            dtype = np.float64
+
         for igrid in range(self._ngrids):
             vals, slc = self.single_grid_values(igrid, field, ops=ops)
-            full_domain[slc] = vals
+            full_domain[slc] = vals.astype(dtype)
         return full_domain
 
     def to_zarr(
@@ -216,6 +220,7 @@ class YTTiledArbitraryGrid:
         *,
         zarr_name: str | None = None,
         ops=None,
+        dtype=None,
         **kwargs,
     ):
         """
@@ -244,7 +249,9 @@ class YTTiledArbitraryGrid:
                 f"type of {type(zarr_store)}."
             )
 
-        dtype = np.float64
+        if dtype is None:
+            dtype = np.float64
+
         if ops is None:
             ops = []
 
@@ -254,7 +261,9 @@ class YTTiledArbitraryGrid:
         full_domain = zarr_store.empty(
             zarr_name, shape=self.dims, chunks=self.chunks, dtype=dtype, **kwargs
         )
-        full_domain = self.to_array(field, full_domain=full_domain, ops=ops)
+        full_domain = self.to_array(
+            field, full_domain=full_domain, ops=ops, dtype=dtype
+        )
         return full_domain
 
 
@@ -265,26 +274,52 @@ class YTPyramid:
         self,
         left_edge,
         right_edge,
-        dims: tuple[int, int, int],
-        chunks: int | tuple[int, int, int],
-        n_levels: int,
-        factor: int = 2,
+        level_dims: [tuple[int, int, int]],
+        level_chunks,
         ds: Dataset = None,
         field_parameters=None,
         data_source: Optional[Any] = None,
     ):
+        """
+
+        Parameters
+        ----------
+        left_edge
+        right_edge
+        level_dims
+        level_chunks
+        ds
+        field_parameters
+        data_source
+        """
 
         levels = []
-        dims_ = np.array(dims, dtype=int)
-        if isinstance(chunks, int):
-            chunks = (chunks,) * self._ndim
-        chunksizes = np.array(chunks, dtype=int)
 
-        for lev in range(n_levels):
-            current_dims = dims_ / factor**lev
+        n_levels = len(level_dims)
+
+        if isinstance(level_chunks, int):
+            level_chunks = (level_chunks,) * self._ndim
+
+        if isinstance(level_chunks, tuple):
+            level_chunks = [level_chunks for _ in range(n_levels)]
+
+        if len(level_chunks) != n_levels:
+            msg = (
+                "length of level_chunks must match the total number of levels."
+                f" Found {len(level_chunks)}, expected {n_levels}"
+            )
+            raise ValueError(msg)
+
+        for ilev in range(n_levels):
+            if isinstance(level_chunks[ilev], int):
+                level_chunks[ilev] = (level_chunks[ilev],) * self._ndim
+
+        for ilev in range(n_levels):
+            chunksizes = np.array(level_chunks[ilev], dtype=int)
+            current_dims = np.asarray(level_dims[ilev], dtype=int)
             n_chunks_lev = int(np.prod(current_dims / chunksizes))
             print(
-                f"Decomposing {current_dims} into {n_chunks_lev} chunks for level {lev}"
+                f"Decomposing {current_dims} into {n_chunks_lev} chunks for level {ilev}"
             )
             tag = YTTiledArbitraryGrid(
                 left_edge,
@@ -305,6 +340,7 @@ class YTPyramid:
         zarr_store,
         zarr_name: str | None = None,
         ops=None,
+        dtype=None,
     ):
         import zarr
 
@@ -330,7 +366,42 @@ class YTPyramid:
                 field_store,
                 zarr_name=str(lev),
                 ops=ops,
+                dtype=dtype,
             )
+
+
+class YTOctPyramid(YTPyramid):
+    def __init__(
+        self,
+        left_edge,
+        right_edge,
+        dims: tuple[int, int, int],
+        chunks: int | tuple[int, int, int],
+        n_levels: int,
+        factor: int = 2,
+        ds: Dataset = None,
+        field_parameters=None,
+        data_source: Optional[Any] = None,
+    ):
+
+        dims_ = np.array(dims, dtype=int)
+        if isinstance(chunks, int):
+            chunks = (chunks,) * self._ndim
+
+        level_dims = []
+        for lev in range(n_levels):
+            current_dims = dims_ / factor**lev
+            level_dims.append(current_dims)
+
+        super().__init__(
+            left_edge,
+            right_edge,
+            dims,
+            chunks,
+            ds=ds,
+            field_parameters=field_parameters,
+            data_source=data_source,
+        )
 
 
 def _get_filled_grid(le, re, shp, field, ds, field_parameters):
