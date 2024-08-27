@@ -82,18 +82,19 @@ class YTTiledArbitraryGrid:
         ijk_grid = np.unravel_index(igrid, self.nchunks)
         le_index = []
         re_index = []
-        le_val = []
-        re_val = []
+        le_val = self.ds.domain_left_edge.copy()
+        re_val = self.ds.domain_right_edge.copy()
+
         for idim in range(self._ndim):
             chunk_i = ijk_grid[idim]
             lei = chunk_i * chunksizes[idim]
             rei = lei + chunksizes[idim]
             lei_val = self.left_edge[idim] + self.dds[idim] * lei
-            rei_val = lei_val + self.dds[idim] * chunksizes[idim]
+            rei_val = self.left_edge[idim] + self.dds[idim] * (chunksizes[idim] + lei)
             le_index.append(lei)
             re_index.append(rei)
-            le_val.append(lei_val)
-            re_val.append(rei_val)
+            le_val[idim] = lei_val
+            re_val[idim] = rei_val
 
         slc = np.s_[
             le_index[0] : re_index[0],
@@ -103,8 +104,8 @@ class YTTiledArbitraryGrid:
 
         le_index = np.array(le_index, dtype=int)
         re_index = np.array(re_index, dtype=int)
-        le_val = np.array(le_val)
-        re_val = np.array(re_val)
+        # le_val = np.array(le_val)
+        # re_val = np.array(re_val)
         shape = chunksizes
 
         return le_index, re_index, le_val, re_val, slc, shape
@@ -258,7 +259,7 @@ class YTTiledArbitraryGrid:
         if zarr_name is None:
             zarr_name = "_".join(field)
 
-        full_domain = zarr_store.empty(
+        full_domain = zarr_store.create(
             zarr_name, shape=self.dims, chunks=self.chunks, dtype=dtype, **kwargs
         )
         full_domain = self.to_array(
@@ -341,6 +342,7 @@ class YTPyramid:
         zarr_name: str | None = None,
         ops=None,
         dtype=None,
+        **kwargs,
     ):
         import zarr
 
@@ -367,6 +369,7 @@ class YTPyramid:
                 zarr_name=str(lev),
                 ops=ops,
                 dtype=dtype,
+                **kwargs,
             )
 
 
@@ -405,6 +408,13 @@ class YTOctPyramid(YTPyramid):
 
 
 def _get_filled_grid(le, re, shp, field, ds, field_parameters):
+
+    # grid = ds.r[
+    #        le[0]: re[0]: complex(0, shp[0]),  # noqa: E203
+    #        le[1]: re[1]: complex(0, shp[1]),  # noqa: E203
+    #        le[2]: re[2]: complex(0, shp[2]),  # noqa: E203
+    #        ]
+
     grid = YTArbitraryGrid(le, re, shp, ds=ds, field_parameters=field_parameters)
     vals = grid[field]
     return vals
