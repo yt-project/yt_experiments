@@ -73,13 +73,9 @@ class YTTiledArbitraryGrid:
     def _dims(self):
         return np.array(self.dims, dtype=int)
 
-    def _get_grid(self, igrid: int):
-        # get grid extent of a **single** grid
-
+    def _get_grid_by_ijk(self, ijk_grid):
         chunksizes = self._chunks
 
-        # get the left/right index and value of this grid
-        ijk_grid = np.unravel_index(igrid, self.nchunks)
         le_index = []
         re_index = []
         le_val = self.ds.domain_left_edge.copy()
@@ -97,18 +93,21 @@ class YTTiledArbitraryGrid:
             re_val[idim] = rei_val
 
         slc = np.s_[
-            le_index[0] : re_index[0],
-            le_index[1] : re_index[1],
-            le_index[2] : re_index[2],
-        ]
+              le_index[0]: re_index[0],
+              le_index[1]: re_index[1],
+              le_index[2]: re_index[2],
+              ]
 
         le_index = np.array(le_index, dtype=int)
         re_index = np.array(re_index, dtype=int)
-        # le_val = np.array(le_val)
-        # re_val = np.array(re_val)
         shape = chunksizes
 
         return le_index, re_index, le_val, re_val, slc, shape
+
+    def _get_grid(self, igrid: int):
+        # get grid extent of a **single** grid
+        ijk_grid = np.unravel_index(igrid, self.nchunks)
+        return self._get_grid_by_ijk(ijk_grid)
 
     def to_dask(self, field, chunks=None):
         from dask import array as da, delayed
