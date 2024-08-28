@@ -36,7 +36,15 @@ class YTTiledArbitraryGrid:
         parallel_method
         data_source
 
+        Notes
+        -----
+
+        With yt < 4.4.0, YTTiledArbitraryGrid may contain artifacts at chunk boundaries
+        along the z-axis. If observed, try upgrading yt (you may need to install from
+        source).
+
         """
+
         self.left_edge = left_edge
         self.right_edge = right_edge
         self.ds = ds
@@ -93,10 +101,10 @@ class YTTiledArbitraryGrid:
             re_val[idim] = rei_val
 
         slc = np.s_[
-              le_index[0]: re_index[0],
-              le_index[1]: re_index[1],
-              le_index[2]: re_index[2],
-              ]
+            le_index[0] : re_index[0],
+            le_index[1] : re_index[1],
+            le_index[2] : re_index[2],
+        ]
 
         le_index = np.array(le_index, dtype=int)
         re_index = np.array(re_index, dtype=int)
@@ -157,6 +165,24 @@ class YTTiledArbitraryGrid:
         return xr_ds
 
     def single_grid_values(self, igrid, field, *, ops=None):
+        """
+        Get the values for a field for a single grid chunk as in-memory array.
+
+        Parameters
+        ----------
+        igrid
+        field
+        ops
+
+        Returns
+        -------
+        tuple
+            (vals, slcs) where vals is a np array for the specified chunk
+            and slcs are the index-slices for each dimension for the global
+            array.
+
+
+        """
         if ops is None:
             ops = []
         _, _, le, re, slc, shp = self._get_grid(igrid)
@@ -202,8 +228,6 @@ class YTTiledArbitraryGrid:
         """
         if full_domain is None:
             full_domain = np.empty(self.dims, dtype="float64")
-        if ops is None:
-            ops = []
 
         if dtype is None:
             dtype = np.float64
@@ -314,6 +338,9 @@ class YTPyramid:
             if isinstance(level_chunks[ilev], int):
                 level_chunks[ilev] = (level_chunks[ilev],) * self._ndim
 
+        # should be ready by this point
+        self._validate_levels(levels)
+
         for ilev in range(n_levels):
             chunksizes = np.array(level_chunks[ilev], dtype=int)
             current_dims = np.asarray(level_dims[ilev], dtype=int)
@@ -333,6 +360,18 @@ class YTPyramid:
             levels.append(tag)
 
         self.levels: [YTTiledArbitraryGrid] = levels
+
+    def _validate_levels(self, levels):
+        for ilev in range(2, len(levels)):
+            res = np.prod(levels[ilev])
+            res_higher = np.prod(levels[ilev - 1])
+            if res > res_higher:
+                msg = (
+                    "Image pyramid initialization failed: expected highest resolution "
+                    "at level 0, with decreasing resolution with increasing level but found "
+                    f" that level {ilev} resolution is higher than {ilev-1}."
+                )
+                raise ValueError(msg)
 
     def to_zarr(
         self,
@@ -407,13 +446,6 @@ class YTOctPyramid(YTPyramid):
 
 
 def _get_filled_grid(le, re, shp, field, ds, field_parameters):
-
-    # grid = ds.r[
-    #        le[0]: re[0]: complex(0, shp[0]),  # noqa: E203
-    #        le[1]: re[1]: complex(0, shp[1]),  # noqa: E203
-    #        le[2]: re[2]: complex(0, shp[2]),  # noqa: E203
-    #        ]
-
     grid = YTArbitraryGrid(le, re, shp, ds=ds, field_parameters=field_parameters)
     vals = grid[field]
     return vals
