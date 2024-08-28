@@ -19,7 +19,7 @@ if __name__ == "__main__":
     add_progressive_loading_image(
         multiscale_img,
         viewer=viewer,
-        contrast_limits=(-28, -24),
+        contrast_limits=(-26, -24),
         colormap="viridis",
         ndisplay=3,
         rendering="mip",
