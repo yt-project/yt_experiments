@@ -9,7 +9,7 @@ on:
       - published
   pull_request:
     paths:
-      - .github/workflows/build_and_publish.yml
+      - .github/workflows/build_and_publish.yaml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
