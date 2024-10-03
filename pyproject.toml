@@ -88,3 +88,17 @@ ignore = [
 
 [tool.ruff.isort]
 combine-as-imports = true
+
+
+[tool.cibuildwheel]
+build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
+build-verbosity = 1
+
+[tool.cibuildwheel.linux]
+archs = "x86_64"
+
+[tool.cibuildwheel.macos]
+archs = "auto"
+
+[tool.cibuildwheel.windows]
+archs = "auto64"
