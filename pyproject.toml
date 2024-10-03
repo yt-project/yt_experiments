@@ -35,6 +35,9 @@ test = [
     "pytest>=6.1",
 ]
 
+[tool.setuptools]
+packages = ["yt_experiments"]
+
 [tool.pytest.ini_options]
 addopts = '''
     -s
