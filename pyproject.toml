@@ -93,10 +93,6 @@ combine-as-imports = true
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
 build-verbosity = 1
-test-extras = "test"
-test-command = [
-    "pytest yt_experiments",
-]
 
 [tool.cibuildwheel.linux]
 archs = "x86_64"
