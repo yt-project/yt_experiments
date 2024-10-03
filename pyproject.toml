@@ -8,7 +8,7 @@ version = "0.1.0"
 authors = [
   { name="The yt project", email="yt-dev@python.org"},
 ]
-description="A repository containing some experimental packages and enhancements "
+description="A repository containing some experimental packages and enhancements for yt"
 requires-python = ">=3.10"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -93,6 +93,10 @@ combine-as-imports = true
 [tool.cibuildwheel]
 build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
 build-verbosity = 1
+test-extras = "test"
+test-command = [
+    "pytest -c {project}/pyproject.toml --rootdir . --color=yes --pyargs yt -ra",
+]
 
 [tool.cibuildwheel.linux]
 archs = "x86_64"
