@@ -95,7 +95,7 @@ build = "cp39-* cp310-* cp311-* cp312-* cp313-*"
 build-verbosity = 1
 test-extras = "test"
 test-command = [
-    "pytest -c {project}/pyproject.toml --rootdir . --color=yes --pyargs yt -ra",
+    "pytest -c {project}/pyproject.toml --rootdir . --color=yes --pyargs yt_experiments -ra",
 ]
 
 [tool.cibuildwheel.linux]
