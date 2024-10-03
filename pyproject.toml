@@ -40,8 +40,6 @@ test = [
 ]
 full = [
     "xarray",
-    "zarr",
-    "dask[array,distributed]"
 ]
 
 [tool.setuptools]
