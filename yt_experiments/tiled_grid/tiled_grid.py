@@ -1,4 +1,5 @@
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 from yt._typing import FieldKey
@@ -19,7 +20,7 @@ class YTTiledArbitraryGrid:
         *,
         ds: Dataset = None,
         field_parameters=None,
-        data_source: Optional[Any] = None,
+        data_source: Any | None = None,
     ):
         """
 
@@ -247,7 +248,7 @@ class YTArbitraryGridPyramid:
         level_chunks,
         ds: Dataset = None,
         field_parameters=None,
-        data_source: Optional[Any] = None,
+        data_source: Any | None = None,
     ):
         """
 
@@ -351,7 +352,7 @@ class YTArbitraryGridOctPyramid(YTArbitraryGridPyramid):
         factor: int | tuple[int, int, int] = 2,
         ds: Dataset = None,
         field_parameters=None,
-        data_source: Optional[Any] = None,
+        data_source: Any | None = None,
     ):
 
         dims_ = np.array(dims, dtype=int)
