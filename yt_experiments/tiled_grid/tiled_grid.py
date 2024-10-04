@@ -11,8 +11,9 @@ from yt.data_objects.static_output import Dataset
 
 def _validate_edge(edge: npt.ArrayLike, ds: Dataset):
     if not isinstance(edge, unyt.unyt_array):
-        return ds.arr(edge, 'code_length')
+        return ds.arr(edge, "code_length")
     return edge
+
 
 def _validate_nd_int(nd: int, x: int | npt.ArrayLike) -> npt.NDArray:
     if isinstance(x, int):
@@ -21,6 +22,7 @@ def _validate_nd_int(nd: int, x: int | npt.ArrayLike) -> npt.NDArray:
     if len(x) != 3:
         raise ValueError("Variable must have a length of 3")
     return x
+
 
 class YTTiledArbitraryGrid:
 
