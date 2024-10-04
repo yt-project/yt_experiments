@@ -249,7 +249,7 @@ class YTArbitraryGridPyramid:
         self,
         left_edge: npt.ArrayLike,
         right_edge: npt.ArrayLike,
-        level_dims: [int | npt.ArrayLike],
+        level_dims: list[int | npt.ArrayLike],
         level_chunks: int | npt.ArrayLike,
         ds: Dataset = None,
         field_parameters=None,
@@ -306,7 +306,7 @@ class YTArbitraryGridPyramid:
             )
             levels.append(tag)
 
-        self.levels: [YTTiledArbitraryGrid] = levels
+        self.levels: list[YTTiledArbitraryGrid] = levels
 
     def _validate_levels(self, levels):
 
