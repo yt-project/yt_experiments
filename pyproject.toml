@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "yt_experiments"
-version = "0.1.0"
 authors = [
   { name="The yt project", email="yt-dev@python.org"},
 ]
@@ -18,6 +17,11 @@ classifiers = [
     "License :: OSI Approved :: BSD License",
 ]
 dependencies=['yt>4.2.0', 'numpy']
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "yt_experiments.__version__"}
+
 
 [project.readme]
 file = "README.md"
