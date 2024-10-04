@@ -4,6 +4,20 @@ Contributions are welcome!
 
 ## Developer notes
 
+### Test suite
+
+Tests are run with `pytest`, to install test dependencies:
+
+```shell
+pip install -e .[test,full]
+```
+
+To run tests:
+
+``` shell
+pytest -v .
+```
+
 ### Releasing
 
 Releases use a mostly automated pipeline of github actions triggered by pushing
