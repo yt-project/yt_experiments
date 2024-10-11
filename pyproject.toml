@@ -38,6 +38,9 @@ text = "BSD 3-Clause"
 test = [
     "pytest>=6.1",
 ]
+full = [
+    "xarray",
+]
 
 [tool.setuptools]
 packages = ["yt_experiments"]
