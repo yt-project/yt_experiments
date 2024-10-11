@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import unyt
 from numpy.testing import assert_equal
 from yt.testing import fake_amr_ds, requires_module
@@ -76,6 +77,16 @@ def test_arbitrary_grid_oct():
     level_arrays = oct.to_arrays(fld)
     for ilev in range(oct.n_levels):
         assert level_arrays[ilev].shape == expected_levels[ilev]
+
+
+def test_missing_ds():
+    with pytest.raises(ValueError, match="Please provide a dataset"):
+        _ = YTTiledArbitraryGrid(
+            unyt.unyt_array([0, 0, 0], "m"),
+            unyt.unyt_array([1, 1, 1], "m"),
+            (20, 20, 20),
+            5,
+        )
 
 
 @requires_module("xarray")
