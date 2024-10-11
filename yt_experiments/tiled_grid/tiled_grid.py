@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import numpy as np
@@ -194,7 +194,7 @@ class YTTiledArbitraryGrid:
         field: FieldKey,
         *,
         output_array=None,
-        ops: list[Callable] = None,
+        ops: list[Callable[[npt.NDArray], npt.NDArray]] | None = None,
         dtype=None,
     ):
         """
@@ -249,7 +249,7 @@ class YTArbitraryGridPyramid:
         self,
         left_edge: npt.ArrayLike,
         right_edge: npt.ArrayLike,
-        level_dims: list[int | npt.ArrayLike],
+        level_dims: Sequence[int | tuple[int, int, int] | npt.ArrayLike],
         level_chunks: int | npt.ArrayLike,
         ds: Dataset = None,
         field_parameters=None,
@@ -359,19 +359,16 @@ class YTArbitraryGridOctPyramid(YTArbitraryGridPyramid):
         data_source: Any | None = None,
     ):
 
-        dims = _validate_nd_int(self._ndim, dims)
+        dims_valid = _validate_nd_int(self._ndim, dims)
 
         if isinstance(chunks, int):
             chunks = (chunks,) * self._ndim
 
-        if isinstance(factor, int):
-            factor = (factor,) * self._ndim
-
-        factor = np.asarray(factor, dtype=int)
+        factor_ = self._validate_factor(factor)
 
         level_dims = []
         for lev in range(n_levels):
-            current_dims = dims / factor**lev
+            current_dims = dims_valid / factor_**lev
             level_dims.append(current_dims)
 
         super().__init__(
@@ -383,6 +380,14 @@ class YTArbitraryGridOctPyramid(YTArbitraryGridPyramid):
             field_parameters=field_parameters,
             data_source=data_source,
         )
+
+    def _validate_factor(
+        self, input_factor: int | tuple[int, int, int]
+    ) -> npt.NDArray[int]:
+        if isinstance(input_factor, int):
+            temp_factor = (input_factor,) * self._ndim
+            return np.asarray(temp_factor, dtype=int)
+        return np.asarray(input_factor, dtype=int)
 
 
 def _get_filled_grid(le, re, shp, field, ds, field_parameters):
