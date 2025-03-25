@@ -39,23 +39,33 @@ class YTTiledArbitraryGrid:
         dims: int | npt.ArrayLike,
         chunks: int | npt.ArrayLike,
         *,
-        ds: Dataset = None,
-        field_parameters=None,
+        ds: Dataset | None = None,
+        field_parameters: Any | None = None,
         data_source: Any | None = None,
     ):
         """
+        An assembly of adjacent YTArbitaryGrid objects, representing a chunked regular
+        grid.
 
         Parameters
         ----------
-        left_edge
-        right_edge
-        dims
-        chunks
-            chunk size (or sizes in each dimension), not number of chunks
-        ds
-        field_parameters
+        left_edge: ArrayLike
+            The left edge of the bounding box
+        right_edge: ArrayLike
+            The right edge of the bounding box
+        dims: int | ArrayLike
+            The size of the whole grid
+        chunks: int | ArrayLike
+            chunk size (or sizes in each dimension), not number of chunks. The number
+            of chunks will be given by dims / chunks.
+        ds: Dataset
+            the yt dataset to operate on
+        field_parameters:
+            field parameters passed to YTArbitraryGrid when constructing individual grid
+            objects
+        data_source:
+            a data source to operate on.
 
-        data_source
 
         Notes
         -----
@@ -264,21 +274,37 @@ class YTArbitraryGridPyramid:
         right_edge: npt.ArrayLike,
         level_dims: Sequence[int | tuple[int, int, int] | npt.ArrayLike],
         level_chunks: int | npt.ArrayLike,
+        *,
         ds: Dataset = None,
         field_parameters=None,
         data_source: Any | None = None,
     ):
         """
 
+        An image pyramid built from YTTiledArbitraryGrid objects.
+
+        Following conventions of image pyramids, level 0 of a YTArbitraryGridPyramid is the
+        pyramid base (the level with the highest resolution).
+
         Parameters
         ----------
-        left_edge
-        right_edge
-        level_dims
-        level_chunks
-        ds
-        field_parameters
-        data_source
+        left_edge: ArrayLike
+            The left edge of the bounding box
+        right_edge: ArrayLike
+            The right edge of the bounding box
+        level_dims: Sequence of dimensions
+            The global dimensions of each level. Number of levels given by len(level_dims)
+        level_chunks: Sequence of chunk sizes
+            The chunk size of each level. Number of chunks in each level is given by
+            level_dims / level_chunks.
+        ds: Dataset
+            the yt dataset to operate on
+        field_parameters:
+            field parameters passed to YTArbitraryGrid when constructing individual grid
+            objects
+        data_source:
+            a data source to operate on.
+
         """
 
         levels = []
@@ -306,7 +332,7 @@ class YTArbitraryGridPyramid:
         self._validate_levels(level_dims)
 
         for ilev in range(n_levels):
-            chunksizes = np.array(level_chunks[ilev], dtype=int)
+            chunksizes = np.asarray(level_chunks[ilev], dtype=int)
             current_dims = np.asarray(level_dims[ilev], dtype=int)
             tag = YTTiledArbitraryGrid(
                 left_edge,
@@ -372,11 +398,38 @@ class YTArbitraryGridOctPyramid(YTArbitraryGridPyramid):
         dims: int | npt.ArrayLike,
         chunks: int | npt.ArrayLike,
         n_levels: int,
+        *,
         factor: int | tuple[int, int, int] = 2,
         ds: Dataset = None,
         field_parameters=None,
         data_source: Any | None = None,
     ):
+        """
+        An octree image pyramid.
+
+        Parameters
+        ----------
+        left_edge: ArrayLike
+            The left edge of the bounding box
+        right_edge: ArrayLike
+            The right edge of the bounding box
+        dims: int | ArrayLike
+            The dimensions of the image pyramid base level
+        chunks: int | ArrayLike
+            The chunk size of the base level, needs to be divisible by factor
+        n_levels: int
+            Number of levels for the pyramid
+        factor: int | tuple[int, int, int]
+            The refinement factor between level, default 2 in each dimension.
+        ds: Dataset
+            the yt dataset to operate on
+        field_parameters:
+            field parameters passed to YTArbitraryGrid when constructing individual grid
+            objects
+        data_source:
+            a data source to operate on.
+
+        """
 
         dims_valid = _validate_nd_int(self._ndim, dims)
 
