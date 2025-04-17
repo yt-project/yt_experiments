@@ -216,22 +216,22 @@ class YTTiledArbitraryGrid:
         self,
         field: FieldKey,
         *,
-        output_array=None,
+        output_array: npt.ArrayLike | None = None,
         ops: list[Callable[[npt.NDArray], npt.NDArray]] | None = None,
-        dtype=None,
+        dtype: str | np.dtype | None = None,
     ):
         """
         Sample the field for each grid in the tiled grid set.
 
         Parameters
         ----------
-        field
+        field: tuple(str, str)
             the field to sample
-        output_array
-            the array to fill. if not provided, defaults to an empty
+        output_array: ArrayLike | None
+            Optional array to fill. if not provided, defaults to an empty
             np array. Can provide any array type (np, zarr) that supports
             np-like indexing.
-        ops
+        ops: list[Callable[[npt.NDArray], npt.NDArray]]] | None
             an optional list of callback functions to apply to the
             sampled field. Must accept a single parameter, the values
             of the sampled field for each grid, and return the modified
@@ -240,6 +240,13 @@ class YTTiledArbitraryGrid:
                 def my_func(values):
                     modified_values = np.abs(values)
                     return modified_values
+
+                ops = [my_func, ]
+
+        dtype: str | np.dtype | None
+            Optional, a dtype to cast to (default np.float64). Note that
+            if using this option, arrays in output_array should be initialized
+            to this dtype.
 
 
         Returns
@@ -373,11 +380,42 @@ class YTArbitraryGridPyramid:
 
     def to_arrays(
         self,
-        field: tuple[str, str],
+        field: FieldKey,
+        *,
         output_arrays: list[npt.ArrayLike | None] | None = None,
         ops: list[Callable[[npt.NDArray], npt.NDArray]] | None = None,
-        dtype=None,
+        dtype: str | np.dtype | None = None,
     ) -> list[npt.ArrayLike]:
+        """Generate arrays for each level of the image pyramid
+
+        Parameters
+        ----------
+        field: tuple(str, str)
+            the field to process (required).
+        output_arrays: list(ArrayLike) | None
+            optional list of array-like objects to store output in.
+        ops: list[Callable[[npt.NDArray], npt.NDArray]]] | None
+            an optional list of callback functions to apply to the
+            sampled field. Must accept a single parameter, the values
+            of the sampled field for each grid, and return the modified
+            values of the grid. Operations are by-grid. For example:
+
+                def my_func(values):
+                    modified_values = np.abs(values)
+                    return modified_values
+
+                ops = [my_func, ]
+        dtype: str | np.dtype | None
+            Optional, a dtype to cast to (default np.float64). Note that
+            if using this option, arrays in output_array should be initialized
+            to this dtype.
+
+
+        Returns
+        -------
+        list[npt.ArrayLike]
+            a list of filled arrays
+        """
         if output_arrays is None:
             output_arrays = [None for _ in range(len(self.levels))]
 
