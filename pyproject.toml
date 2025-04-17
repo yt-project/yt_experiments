@@ -42,8 +42,10 @@ full = [
     "xarray",
 ]
 
-[tool.setuptools]
-packages = ["yt_experiments"]
+
+[tool.setuptools.packages.find]
+include = ["yt_experiments*"]
+
 
 [tool.pytest.ini_options]
 addopts = '''
