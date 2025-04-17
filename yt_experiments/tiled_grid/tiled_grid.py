@@ -375,13 +375,18 @@ class YTArbitraryGridPyramid:
         self,
         field: tuple[str, str],
         output_arrays: list[npt.ArrayLike | None] | None = None,
+        ops: list[Callable[[npt.NDArray], npt.NDArray]] | None = None,
+        dtype=None,
     ) -> list[npt.ArrayLike]:
         if output_arrays is None:
             output_arrays = [None for _ in range(len(self.levels))]
 
         for ilev, yttag in enumerate(self.levels):
             output_arrays[ilev] = yttag.to_array(
-                field, output_array=output_arrays[ilev]
+                field,
+                output_array=output_arrays[ilev],
+                ops=ops,
+                dtype=dtype,
             )
 
         return output_arrays
