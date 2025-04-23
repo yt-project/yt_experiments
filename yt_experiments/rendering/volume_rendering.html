@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Three.js Cube Collection with Controls</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/"
+  }
+}
+</script>
+<script src="js-colormaps.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const renderer = new THREE.WebGLRenderer();
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+// Check for float texture support
+if (!renderer.capabilities.isWebGL2 || !renderer.extensions.get('EXT_color_buffer_float')) {
+  alert("Your browser doesn't support floating point render targets.");
+}
+
+// Main scene
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(5, 5, 10);
+camera.lookAt(.5, .5, .5);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+
+
+// Signed depth shader
+const depthMaterial = new THREE.ShaderMaterial({
+  vertexShader: `
+    varying vec3 vWorldPosition;
+    attribute float quantity;
+    attribute float weight;
+    varying vec2 vDataValue;
+
+    void main() {
+      vec4 worldPosition = modelMatrix * instanceMatrix * vec4(position, 1.0);
+      vWorldPosition = worldPosition.xyz;
+      vDataValue = vec2(quantity * weight, weight);
+      // We need to rescale by the size of the local object -> given in instanceMatrix[0][0]
+      vDataValue /= instanceMatrix[0][0] * instanceMatrix[0][0];
+      gl_Position = projectionMatrix * viewMatrix * worldPosition;
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vWorldPosition;
+    varying vec2 vDataValue;
+    void main() {
+      float depth = distance(vWorldPosition, cameraPosition);
+      float sign = gl_FrontFacing ? 1.0 : -1.0;
+      float f = sign * depth;
+      gl_FragColor = vec4(f * vDataValue.x, f * vDataValue.y, 0.0, 1.0);
+    }
+  `,
+  uniforms: {
+    cameraPosition: { value: camera.position },
+  },
+  blending: THREE.AdditiveBlending,
+  depthTest: false,
+  depthWrite: false,
+  transparent: true,
+  side: THREE.DoubleSide,
+});
+
+
+// Create float32 render target
+const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+  type: THREE.FloatType,
+  format: THREE.RedGreenFormat,
+  minFilter: THREE.NearestFilter,
+  magFilter: THREE.NearestFilter,
+  depthBuffer: false,
+  stencilBuffer: false,
+  generateMipmaps: false,
+});
+
+// Fullscreen quad for visualization
+const screenScene = new THREE.Scene();
+const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+const colormapSize = 256;
+const colormapData = new Uint8Array(colormapSize * 4); // RGBA
+const colormapTexture = new THREE.DataTexture(colormapData, colormapSize, 1, THREE.RGBAFormat);
+
+function setColormap(cmap_name) {
+  // Example: use a 256x1 Inferno colormap array (Uint8Array or Float32Array)
+
+  // Fill with inferno values (example uses d3-scale-chromatic or custom data)
+  for (let i = 0; i < colormapSize; i++) {
+    const t = i / (colormapSize - 1);
+    const v = evaluate_cmap(t, cmap_name, false);
+    colormapData[4*i + 0] = v[0];
+    colormapData[4*i + 1] = v[1];
+    colormapData[4*i + 2] = v[2];
+    colormapData[4*i + 3] = 1.0;
+  }
+
+  // Update the colormap texture with the new data
+  colormapTexture.image.data = colormapData;
+  colormapTexture.needsUpdate = true;
+}
+
+
+const screenMaterial = new THREE.ShaderMaterial({
+  vertexShader: `
+    void main() {
+      gl_Position = vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D depthTexture;
+    uniform sampler2D colormap;
+    uniform float minVal;
+    uniform float maxVal;
+    void main() {
+      vec2 uv = gl_FragCoord.xy / vec2(${window.innerWidth.toFixed(1)}, ${window.innerHeight.toFixed(1)});
+      float qw = texture2D(depthTexture, uv).r;
+      float w = texture2D(depthTexture, uv).g;
+      float depth = log(qw / w) / log(10.0);
+
+      float t = clamp((depth - minVal) / (maxVal - minVal), 0.0, 1.0);
+      vec4 color = texture2D(colormap, vec2(t, 0.0));
+      gl_FragColor = vec4(color.rgb, 1);
+    }
+  `,
+  uniforms: {
+    depthTexture: { value: renderTarget.texture },
+    colormap: { value: colormapTexture },
+    minVal: { value: -0.0 },
+    maxVal: { value: 4.0 }
+  }
+});
+
+const screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), screenMaterial);
+screenScene.add(screenQuad);
+
+// Animate
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+
+  // 1st pass: signed depth to float render target
+  renderer.setRenderTarget(renderTarget);
+  renderer.clear();
+  renderer.render(scene, camera);
+  renderer.setRenderTarget(null);
+
+  // 2nd pass: visualize
+  renderer.render(screenScene, screenCamera);
+}
+
+animate();
+
+// Resize
+window.addEventListener('resize', () => {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+
+  renderTarget.setSize(w, h);
+});
+
+let instancedMesh, qtyValues, weightValues;
+
+function loadCubes(x, y, z, dx, qtyValues, weightValues) {
+  if (instancedMesh) {
+    scene.remove(instancedMesh);
+    instancedMesh.geometry.dispose();
+    instancedMesh.material.dispose();
+  }
+
+  const instanceCount = x.length;
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  instancedMesh = new THREE.InstancedMesh(geometry, depthMaterial, instanceCount);
+
+  const dummy = new THREE.Object3D();
+
+  for (let i = 0; i < x.length; ++i) {
+    dummy.position.set(x[i], y[i], z[i]);
+    dummy.scale.set(dx[i], dx[i], dx[i]);
+    dummy.updateMatrix();
+    instancedMesh.setMatrixAt(i, dummy.matrix);
+  }
+
+  // Add the values as attributes to the geometry
+  const weightValueAttribute = new THREE.InstancedBufferAttribute(weightValues, 1);
+  instancedMesh.geometry.setAttribute('weight', weightValueAttribute);
+  const qtyValuesAttribute = new THREE.InstancedBufferAttribute(qtyValues, 1);
+  instancedMesh.geometry.setAttribute('quantity', qtyValuesAttribute);
+
+  // Update the instanced mesh to reflect the new attributes
+  instancedMesh.instanceMatrix.needsUpdate = true;
+
+  scene.add(instancedMesh);
+}
+
+
+document.getElementById('fileInput').addEventListener('change', async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const buffer = await file.arrayBuffer();
+  const floatArray = new Float32Array(buffer);
+  const N = floatArray.length / 6;
+
+  const x = floatArray.slice(0, N);
+  const y = floatArray.slice(N, 2 * N);
+  const z = floatArray.slice(2 * N, 3 * N);
+  const dx = floatArray.slice(3 * N, 4 * N);
+  const qtyValues = floatArray.slice(4 * N, 5 * N);
+  const weightValues = floatArray.slice(5 * N, 6 * N);
+
+  console.log("Got an array of length", N);
+
+  loadCubes(x, y, z, dx, qtyValues, weightValues);
+});
+
+function updateMinMax() {
+  const minVal = parseFloat(document.getElementById('minVal').value);
+  const maxVal = parseFloat(document.getElementById('maxVal').value);
+  screenMaterial.uniforms.minVal.value = minVal;
+  screenMaterial.uniforms.maxVal.value = maxVal;
+}
+document.getElementById('minVal').addEventListener('input', (event) => {
+  updateMinMax();
+});
+document.getElementById('maxVal').addEventListener('input', (event) => {
+  updateMinMax();
+});
+
+// Populate colormap dropdown
+const colormapSelect = document.getElementById('colormap');
+const colormaps = ['viridis', 'plasma', 'inferno', 'magma', 'cividis'];
+
+colormaps.forEach(colormap => {
+  const option = document.createElement('option');
+  option.value = colormap;
+  option.textContent = colormap.charAt(0).toUpperCase() + colormap.slice(1);
+  colormapSelect.appendChild(option);
+});
+
+
+// Watch for changes
+document.getElementById('colormap').addEventListener('change', (event) => {
+  setColormap(event.target.value);
+});
+
+// Set default colormap selection
+setColormap('magma');
+colormapSelect.value = 'magma';
+updateMinMax();
+</script>
+<input type="file" id="fileInput" accept=".bin" />
+<input type="float" id="minVal" value="-2.0" step="0.1" />
+<input type="float" id="maxVal" value="1.0" step="0.1" />
+<select id="colormap"></select>
+</body>
+</html>
