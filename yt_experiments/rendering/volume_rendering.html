@@ -116,39 +116,53 @@ function setColormap(cmap_name) {
   colormapTexture.needsUpdate = true;
 }
 
+let screenQuad, screenMaterial;
 
-const screenMaterial = new THREE.ShaderMaterial({
-  vertexShader: `
-    void main() {
-      gl_Position = vec4(position, 1.0);
-    }
-  `,
-  fragmentShader: `
-    uniform sampler2D depthTexture;
-    uniform sampler2D colormap;
-    uniform float minVal;
-    uniform float maxVal;
-    void main() {
-      vec2 uv = gl_FragCoord.xy / vec2(${window.innerWidth.toFixed(1)}, ${window.innerHeight.toFixed(1)});
-      float qw = texture2D(depthTexture, uv).r;
-      float w = texture2D(depthTexture, uv).g;
-      float depth = log(qw / w) / log(10.0);
-
-      float t = clamp((depth - minVal) / (maxVal - minVal), 0.0, 1.0);
-      vec4 color = texture2D(colormap, vec2(t, 0.0));
-      gl_FragColor = vec4(color.rgb, 1);
-    }
-  `,
-  uniforms: {
-    depthTexture: { value: renderTarget.texture },
-    colormap: { value: colormapTexture },
-    minVal: { value: -0.0 },
-    maxVal: { value: 4.0 }
+function setupScreenMaterial() {
+  if (screenQuad) {
+    screenScene.remove(screenQuad);
+    screenQuad.geometry.dispose();
+    screenQuad.material.dispose();
   }
-});
 
-const screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), screenMaterial);
-screenScene.add(screenQuad);
+  screenMaterial = new THREE.ShaderMaterial({
+    vertexShader: `
+      void main() {
+        gl_Position = vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      uniform sampler2D depthTexture;
+      uniform sampler2D colormap;
+      uniform float minVal;
+      uniform float maxVal;
+      void main() {
+        vec2 uv = gl_FragCoord.xy / vec2(${window.innerWidth.toFixed(1)}, ${window.innerHeight.toFixed(1)});
+        float qw = texture2D(depthTexture, uv).r;
+        float w = texture2D(depthTexture, uv).g;
+        float depth = log(qw / w) / log(10.0);
+
+        float t = clamp((depth - minVal) / (maxVal - minVal), 0.0, 1.0);
+        vec4 color = texture2D(colormap, vec2(t, 0.0));
+        gl_FragColor = vec4(color.rgb, 1);
+      }
+    `,
+    uniforms: {
+      depthTexture: { value: renderTarget.texture },
+      colormap: { value: colormapTexture },
+      minVal: { value: -0.0 },
+      maxVal: { value: 4.0 }
+    }
+  });
+
+  screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), screenMaterial);
+  screenScene.add(screenQuad);
+  updateMinMax();
+}
+
+setupScreenMaterial();
+// Call again when window resizes
+window.addEventListener('resize', setupScreenMaterial);
 
 // Animate
 function animate() {
@@ -212,9 +226,8 @@ function loadCubes(x, y, z, dx, qtyValues, weightValues) {
   scene.add(instancedMesh);
 }
 
-
-document.getElementById('fileInput').addEventListener('change', async (event) => {
-  const file = event.target.files[0];
+async function load_file(file) {
+  // const file = event.target.files[0];
   if (!file) return;
 
   const buffer = await file.arrayBuffer();
@@ -231,6 +244,11 @@ document.getElementById('fileInput').addEventListener('change', async (event) =>
   console.log("Got an array of length", N);
 
   loadCubes(x, y, z, dx, qtyValues, weightValues);
+}
+;
+document.getElementById('fileInput').addEventListener('change', async (event) => {
+  load_file(event.target.files[0]);
+  
 });
 
 function updateMinMax() {
@@ -267,10 +285,28 @@ document.getElementById('colormap').addEventListener('change', (event) => {
 setColormap('magma');
 colormapSelect.value = 'magma';
 updateMinMax();
+
+async function load_from_url(url) {
+  const response = await fetch(url);
+  if (!response.ok) {
+    console.error("Failed to fetch file:", response.statusText);
+    return;
+  }
+  const file = await response.blob(); // Await the blob response
+  load_file(file);
+}
+// If the current URL ends with "#<filename>", load that file from URL
+if (window.location.hash.startsWith("#") && window.location.hash.length > 1) {
+  const filename = window.location.hash.substring(1);
+  // Logic to load the file using the filename
+  console.log("Loading file from URL:", filename);
+  load_from_url(filename);
+}
+
 </script>
 <input type="file" id="fileInput" accept=".bin" />
-<input type="float" id="minVal" value="-2.0" step="0.1" />
-<input type="float" id="maxVal" value="1.0" step="0.1" />
+<input type="float" id="minVal" value="-3.0" step="0.1" />
+<input type="float" id="maxVal" value="2.0" step="0.1" />
 <select id="colormap"></select>
 </body>
 </html>
