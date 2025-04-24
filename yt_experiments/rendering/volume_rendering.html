@@ -50,9 +50,11 @@ const depthMaterial = new THREE.ShaderMaterial({
     attribute float quantity;
     attribute float weight;
     varying vec2 vDataValue;
+    uniform float globalScale; // Added globalScale uniform
 
     void main() {
-      vec4 worldPosition = modelMatrix * instanceMatrix * vec4(position, 1.0);
+      vec3 scaledPosition = position * globalScale;
+      vec4 worldPosition = modelMatrix * instanceMatrix * vec4(scaledPosition, 1.0);
       vWorldPosition = worldPosition.xyz;
       vDataValue = vec2(quantity * weight, weight);
       // We need to rescale by the size of the local object -> given in instanceMatrix[0][0]
@@ -72,6 +74,7 @@ const depthMaterial = new THREE.ShaderMaterial({
   `,
   uniforms: {
     cameraPosition: { value: camera.position },
+    globalScale: { value: 1.0 },
   },
   blending: THREE.AdditiveBlending,
   depthTest: false,
@@ -236,6 +239,7 @@ setInterval(() => {
     // Do not increase the instance count while interacting with the controls
     if (controlsInProgress) return;
     instancedMesh.count = Math.min(instancedMesh.count * 2, instancesInFile);
+    // depthMaterial.uniforms.globalScale.value = Math.pow(instancesInFile / instancedMesh.count, 1/3);
     instancedMesh.instanceMatrix.needsUpdate = true;
   }
 }, 100);
