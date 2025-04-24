@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+
   <title>Three.js Cube Collection with Controls</title>
   <style>
     body { margin: 0; overflow: hidden; }
@@ -22,9 +23,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const renderer = new THREE.WebGLRenderer();
+const renderer = new THREE.WebGLRenderer({ });
+
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(window.devicePixelRatio);
+// Note: in theory, we should set it to window.devicePixelRatio
+//       but this causes issues on high-DPI displays
+renderer.setPixelRatio(1);
 document.body.appendChild(renderer.domElement);
 
 // Check for float texture support
@@ -55,10 +59,14 @@ const depthMaterial = new THREE.ShaderMaterial({
     void main() {
       vec3 scaledPosition = position * globalScale;
       vec4 worldPosition = modelMatrix * instanceMatrix * vec4(scaledPosition, 1.0);
+
       vWorldPosition = worldPosition.xyz;
       vDataValue = vec2(quantity * weight, weight);
+
       // We need to rescale by the size of the local object -> given in instanceMatrix[0][0]
-      vDataValue /= instanceMatrix[0][0] * instanceMatrix[0][0];
+      vec2 instanceScale = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
+
+      vDataValue /= instanceScale.x * instanceScale.y;
       gl_Position = projectionMatrix * viewMatrix * worldPosition;
     }
   `,
