@@ -35,11 +35,12 @@ if (!renderer.capabilities.isWebGL2 || !renderer.extensions.get('EXT_color_buffe
 // Main scene
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-camera.position.set(5, 5, 10);
-camera.lookAt(.5, .5, .5);
+// camera.lookAt(.5, .5, .5);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.dampingFactor = 0.5;
+camera.position.set(0.5, 0.5, 5);
 
 
 // Signed depth shader
@@ -116,7 +117,22 @@ function setColormap(cmap_name) {
   colormapTexture.needsUpdate = true;
 }
 
+// Global toggle: when true, draw a frame
+let needsRender = true;
 let screenQuad, screenMaterial;
+let instancedMesh, qtyValues, weightValues;
+let instancesInFile = 0;
+let countForFps = 10000;
+let controlsInProgress = false;
+
+function setNeedsRender(str) {
+  needsRender = true;
+  if (instancedMesh) {
+    instancedMesh.count = countForFps;
+  }
+  console.log("Set needsRender to true", str);
+}
+
 
 function setupScreenMaterial() {
   if (screenQuad) {
@@ -158,16 +174,32 @@ function setupScreenMaterial() {
   screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), screenMaterial);
   screenScene.add(screenQuad);
   updateMinMax();
+  setNeedsRender();
 }
 
 setupScreenMaterial();
 // Call again when window resizes
 window.addEventListener('resize', setupScreenMaterial);
 
+controls.addEventListener('change', () => setNeedsRender("change"));
+controls.addEventListener('start', () => {
+  controlsInProgress = true;
+});
+controls.addEventListener('end', () => {
+  console.log("Controls ended");
+  controlsInProgress = false;
+  setNeedsRender("end");
+});
+
 // Animate
 function animate() {
   requestAnimationFrame(animate);
   controls.update();
+
+  if (!needsRender) return;
+
+  // Measure timing
+  const startTime = performance.now();
 
   // 1st pass: signed depth to float render target
   renderer.setRenderTarget(renderTarget);
@@ -177,7 +209,36 @@ function animate() {
 
   // 2nd pass: visualize
   renderer.render(screenScene, screenCamera);
+  const endTime = performance.now();
+
+  const elapsedTime = endTime - startTime;
+  const fps = 1000 / elapsedTime;
+
+  if (instancedMesh && fps < 30) {
+    // We assume the FPS is proportional to the number of instances
+    countForFps = Math.min(Math.max(10000, Math.round(instancedMesh.count / 30 * fps)), instancesInFile);
+    console.log("FPS:", fps, "Instances for 30 FPS:", countForFps);
+  }
+
+  // Check whether the number of instances is right
+  if (instancedMesh && instancedMesh.count < instancesInFile) {
+    needsRender = true;
+  } else {
+    needsRender = false;
+  }
 }
+
+// Periodically check whether we need to increase the instance count
+setInterval(() => {
+  if (instancedMesh && instancedMesh.count < instancesInFile) {
+    console.log("Increasing instance count to", instancedMesh.count);
+    needsRender = true;
+    // Do not increase the instance count while interacting with the controls
+    if (controlsInProgress) return;
+    instancedMesh.count = Math.min(instancedMesh.count * 2, instancesInFile);
+    instancedMesh.instanceMatrix.needsUpdate = true;
+  }
+}, 100);
 
 animate();
 
@@ -190,9 +251,9 @@ window.addEventListener('resize', () => {
   camera.updateProjectionMatrix();
 
   renderTarget.setSize(w, h);
-});
 
-let instancedMesh, qtyValues, weightValues;
+  setNeedsRender("resize");
+});
 
 function loadCubes(x, y, z, dx, qtyValues, weightValues) {
   if (instancedMesh) {
@@ -205,25 +266,42 @@ function loadCubes(x, y, z, dx, qtyValues, weightValues) {
   const geometry = new THREE.BoxGeometry(1, 1, 1);
   instancedMesh = new THREE.InstancedMesh(geometry, depthMaterial, instanceCount);
 
+  // Generate random permutation
+  const indices = [...Array(x.length).keys()];
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+
   const dummy = new THREE.Object3D();
 
+  const newQtyValues = new Float32Array(instanceCount);
+  const newWeightValues = new Float32Array(instanceCount);
+
+  // Fill in the instances
   for (let i = 0; i < x.length; ++i) {
-    dummy.position.set(x[i], y[i], z[i]);
-    dummy.scale.set(dx[i], dx[i], dx[i]);
+    const idx = indices[i];
+    dummy.position.set(x[idx], y[idx], z[idx]);
+    dummy.scale.set(dx[idx], dx[idx], dx[idx]);
     dummy.updateMatrix();
     instancedMesh.setMatrixAt(i, dummy.matrix);
+
+    // Store the quantity and weight values
+    newQtyValues[i] = qtyValues[idx];
+    newWeightValues[i] = weightValues[idx];
   }
 
   // Add the values as attributes to the geometry
-  const weightValueAttribute = new THREE.InstancedBufferAttribute(weightValues, 1);
+  const weightValueAttribute = new THREE.InstancedBufferAttribute(newWeightValues, 1);
   instancedMesh.geometry.setAttribute('weight', weightValueAttribute);
-  const qtyValuesAttribute = new THREE.InstancedBufferAttribute(qtyValues, 1);
+  const qtyValuesAttribute = new THREE.InstancedBufferAttribute(newQtyValues, 1);
   instancedMesh.geometry.setAttribute('quantity', qtyValuesAttribute);
 
   // Update the instanced mesh to reflect the new attributes
   instancedMesh.instanceMatrix.needsUpdate = true;
 
   scene.add(instancedMesh);
+  setNeedsRender("loadCubes");
 }
 
 async function load_file(file) {
@@ -233,6 +311,7 @@ async function load_file(file) {
   const buffer = await file.arrayBuffer();
   const floatArray = new Float32Array(buffer);
   const N = floatArray.length / 6;
+  instancesInFile = N;
 
   const x = floatArray.slice(0, N);
   const y = floatArray.slice(N, 2 * N);
@@ -256,6 +335,7 @@ function updateMinMax() {
   const maxVal = parseFloat(document.getElementById('maxVal').value);
   screenMaterial.uniforms.minVal.value = minVal;
   screenMaterial.uniforms.maxVal.value = maxVal;
+  setNeedsRender("updateMinMax");
 }
 document.getElementById('minVal').addEventListener('input', (event) => {
   updateMinMax();
