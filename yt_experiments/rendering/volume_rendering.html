@@ -28,7 +28,7 @@ renderer.setPixelRatio(window.devicePixelRatio);
 document.body.appendChild(renderer.domElement);
 
 // Check for float texture support
-if (!renderer.capabilities.isWebGL2 || !renderer.extensions.get('EXT_color_buffer_float')) {
+if (!renderer.capabilities.isWebGL2 || !renderer.extensions.get('EXT_color_buffer_float') || !renderer.extensions.get("EXT_float_blend")) {
   alert("Your browser doesn't support floating point render targets.");
 }
 
