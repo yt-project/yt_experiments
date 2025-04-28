@@ -42,6 +42,8 @@
   </label>
   <input type="text" id="sourceUrl" placeholder="Source URL" style="width: 200px;">
   <button id="loadUrlBtn">Load URL</button>
+  <input type="file" id="positionFileInput" accept="*" />
+  <label for="positionFileInput">Position File</label>
 </div>
 <canvas id="three-canvas"></canvas>
 <div id="colorbar"></div>
@@ -53,6 +55,7 @@
   }
 }
 </script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="js-colormaps.js"></script>
 <script type="module">
 import * as THREE from 'three';
@@ -68,6 +71,7 @@ class VolumeRenderer {
       zlim: options.zlim ?? -3.0,
       zmax: options.zmax ?? 2.0,
       colormap: options.colormap ?? 'magma',
+      positionFile: options.positionFile ?? null,
     };
 
     // DOM
@@ -82,6 +86,7 @@ class VolumeRenderer {
     this.showColorbarCheckbox = document.getElementById('showColorbar');
     this.sourceUrlInput = document.getElementById('sourceUrl');
     this.loadUrlBtn = document.getElementById('loadUrlBtn');
+    this.positionFileInput = document.getElementById('positionFileInput');
 
     // Three.js setup
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas });
@@ -338,6 +343,55 @@ class VolumeRenderer {
       if (url) this.loadFromUrl(url);
     });
 
+    this.positionFileInput.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      // Parse the file as camera.x, camera.y, camera.z, camera.focus.x, camera.focus.y, camera.focus.z
+      const text = await file.text();
+      const lines = text.split('\n');
+
+      const cameraViews = lines.map(element => {
+        const values = element.split(' ').map(Number);
+        if (values.length === 6) {
+          return {
+            position: values.slice(0, 3),
+            focus: values.slice(3, 6),
+          };
+        }
+      }).filter((element) => element !== undefined);
+
+      this.renderCameraSequence(cameraViews).then(() => {
+        // Save the frames to a zip file
+        const zip = new JSZip();
+        const folder = zip.folder("frames");
+        this.frameBuffer.forEach((dataURL, i) => {
+          const base64Data = dataURL.split(',')[1];
+          const binaryString = atob(base64Data);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let j = 0; j < len; j++) {
+            bytes[j] = binaryString.charCodeAt(j);
+          }
+
+          // Add file as "frame_XXX.png"
+          const istr = i.toString().padStart(3, '0');
+          folder.file(`frame_${istr}.png`, bytes, { base64: true });
+        });
+
+        
+        zip.generateAsync({ type: "blob" }).then((content) => {
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(content);
+          a.download = "frames.zip";
+          a.click();
+        });
+        console.log("Camera sequence completed");
+
+        // Clear the frame buffer
+        this.frameBuffer = [];
+      });
+    });
+
     // Adaptive resampling interval
     setInterval(() => {
       if (this.instancedMesh && this.instancedMesh.count < this.instancesInFile) {
@@ -450,10 +504,47 @@ class VolumeRenderer {
     this.scene.add(this.instancedMesh);
     this.setNeedsRender("loadCubes");
   }
+
+  async renderCameraSequence(cameraViews) {
+    // Store the current adaptive resampling option
+    const oldAdaptiveResampling = this.options.adaptiveResampling;
+    const oldPosition = this.camera.position.clone();
+    const oldTarget = this.controls.target.clone();
+    this.options.adaptiveResampling = false;
+    this.frameBuffer = [];
+    for (const view of cameraViews) {
+      // Set camera position and focus
+      this.camera.position.set(...view.position);
+      this.controls.target.set(...view.focus);
+      this.camera.updateProjectionMatrix();
+      this.controls.update();
+
+      // Force render
+      this.setNeedsRender("renderCameraSequence");
+      this.setScreenNeedsRender("renderCameraSequence");
+
+      // Wait for the next animation frame to ensure rendering is done
+      await new Promise(requestAnimationFrame);
+
+      // // Render the scene to the screen
+      // this.renderer.setRenderTarget(null);
+      // this.renderer.render(this.screenScene, this.screenCamera);
+
+      // Read the canvas as a data URL (PNG)
+      const dataURL = this.canvas.toDataURL("image/png");
+      this.frameBuffer.push(dataURL);
+    }
+
+    // Restore adaptive resampling option
+    this.options.adaptiveResampling = oldAdaptiveResampling;
+    this.camera.position.copy(oldPosition);
+    this.controls.target.copy(oldTarget);
+  }
 }
 
 // Instantiate the renderer
 const rendererApp = new VolumeRenderer();
+
 
 </script>
 </body>
