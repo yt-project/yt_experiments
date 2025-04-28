@@ -352,10 +352,11 @@ class VolumeRenderer {
 
       const cameraViews = lines.map(element => {
         const values = element.split(' ').map(Number);
-        if (values.length === 6) {
+        if (values.length === 9) {
           return {
             position: values.slice(0, 3),
             focus: values.slice(3, 6),
+            north: values.slice(6, 9),
           };
         }
       }).filter((element) => element !== undefined);
@@ -515,6 +516,7 @@ class VolumeRenderer {
     for (const view of cameraViews) {
       // Set camera position and focus
       this.camera.position.set(...view.position);
+      this.camera.up.set(...view.north);
       this.controls.target.set(...view.focus);
       this.camera.updateProjectionMatrix();
       this.controls.update();
