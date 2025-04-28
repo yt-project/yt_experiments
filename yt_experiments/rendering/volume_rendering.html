@@ -2,14 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-
   <title>Three.js Cube Collection with Controls</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
+    #colorbar {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      width: 20px;
+      height: 256px;
+      background: linear-gradient(to top, #000, #fff);
+      border: 1px solid #888;
+      display: none;
+    }
+    #controls {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      background: rgba(255,255,255,0.8);
+      padding: 10px;
+      border-radius: 6px;
+    }
   </style>
 </head>
 <body>
+<div id="controls">
+  <input type="file" id="fileInput" accept=".bin" />
+  <input type="float" id="minVal" value="-3.0" step="0.1" />
+  <input type="float" id="maxVal" value="2.0" step="0.1" />
+  <select id="colormap"></select>
+  <label>
+    <input type="checkbox" id="adaptiveResampling" checked>
+    Adaptive Resampling
+  </label>
+  <label>
+    <input type="checkbox" id="showColorbar" checked>
+    Colorbar
+  </label>
+  <input type="text" id="sourceUrl" placeholder="Source URL" style="width: 200px;">
+  <button id="loadUrlBtn">Load URL</button>
+</div>
+<canvas id="three-canvas"></canvas>
+<div id="colorbar"></div>
 <script type="importmap">
 {
   "imports": {
@@ -23,382 +58,403 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-const renderer = new THREE.WebGLRenderer({ });
+class VolumeRenderer {
+  constructor(options = {}) {
+    // Options
+    this.options = {
+      adaptiveResampling: options.adaptiveResampling ?? true,
+      showColorbar: options.showColorbar ?? true,
+      source: options.source ?? null,
+      zlim: options.zlim ?? -3.0,
+      zmax: options.zmax ?? 2.0,
+      colormap: options.colormap ?? 'magma',
+    };
 
-renderer.setSize(window.innerWidth, window.innerHeight);
-// Note: in theory, we should set it to window.devicePixelRatio
-//       but this causes issues on high-DPI displays
-renderer.setPixelRatio(1);
-document.body.appendChild(renderer.domElement);
+    // DOM
+    this.canvas = document.getElementById('three-canvas');
+    this.colorbarDiv = document.getElementById('colorbar');
+    this.controlsDiv = document.getElementById('controls');
+    this.fileInput = document.getElementById('fileInput');
+    this.minValInput = document.getElementById('minVal');
+    this.maxValInput = document.getElementById('maxVal');
+    this.colormapSelect = document.getElementById('colormap');
+    this.adaptiveResamplingCheckbox = document.getElementById('adaptiveResampling');
+    this.showColorbarCheckbox = document.getElementById('showColorbar');
+    this.sourceUrlInput = document.getElementById('sourceUrl');
+    this.loadUrlBtn = document.getElementById('loadUrlBtn');
 
-// Check for float texture support
-if (!renderer.capabilities.isWebGL2 || !renderer.extensions.get('EXT_color_buffer_float') || !renderer.extensions.get("EXT_float_blend")) {
-  alert("Your browser doesn't support floating point render targets.");
-}
+    // Three.js setup
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(1);
 
-// Main scene
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
-// camera.lookAt(.5, .5, .5);
-
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.5;
-camera.position.set(0.5, 0.5, 5);
-
-
-// Signed depth shader
-const depthMaterial = new THREE.ShaderMaterial({
-  vertexShader: `
-    varying vec3 vWorldPosition;
-    attribute float quantity;
-    attribute float weight;
-    varying vec2 vDataValue;
-    uniform float globalScale; // Added globalScale uniform
-
-    void main() {
-      vec3 scaledPosition = position * globalScale;
-      vec4 worldPosition = modelMatrix * instanceMatrix * vec4(scaledPosition, 1.0);
-
-      vWorldPosition = worldPosition.xyz;
-      vDataValue = vec2(quantity * weight, weight);
-
-      // We need to rescale by the size of the local object -> given in instanceMatrix[0][0]
-      vec2 instanceScale = vec3(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
-
-      vDataValue /= instanceScale.x * instanceScale.y;
-      gl_Position = projectionMatrix * viewMatrix * worldPosition;
+    if (!this.renderer.capabilities.isWebGL2 || !this.renderer.extensions.get('EXT_color_buffer_float') || !this.renderer.extensions.get("EXT_float_blend")) {
+      alert("Your browser doesn't support floating point render targets.");
     }
-  `,
-  fragmentShader: `
-    varying vec3 vWorldPosition;
-    varying vec2 vDataValue;
-    void main() {
-      float depth = distance(vWorldPosition, cameraPosition);
-      float sign = gl_FrontFacing ? 1.0 : -1.0;
-      float f = sign * depth;
-      gl_FragColor = vec4(f * vDataValue.x, f * vDataValue.y, 0.0, 1.0);
+
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.5;
+    this.camera.position.set(0.5, 0.5, 5);
+
+    // Shader, render target, etc.
+    this.colormapSize = 256;
+    this.colormapData = new Uint8Array(this.colormapSize * 4);
+    this.colormapTexture = new THREE.DataTexture(this.colormapData, this.colormapSize, 1, THREE.RGBAFormat);
+
+    this.depthMaterial = this.createDepthMaterial();
+    this.renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      type: THREE.FloatType,
+      format: THREE.RedGreenFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false,
+    });
+
+    this.screenScene = new THREE.Scene();
+    this.screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    this.screenMaterial = null;
+    this.screenQuad = null;
+    this.instancedMesh = null;
+    this.instancesInFile = 0;
+    this.countForFps = 10000;
+    this.controlsInProgress = false;
+    this.needsRender = true;  // True if the whole scene needs to be rendered
+    this.needsScreenRender = true;  // True if the screen quad needs to be rendered
+
+    this.setupColormapSelect();
+    this.setColormap(this.options.colormap);
+    this.setupScreenMaterial();
+    this.addEventListeners();
+    this.animate();
+    this.updateColorbar();
+
+    // Load from hash if present
+    if (window.location.hash.startsWith("#") && window.location.hash.length > 1) {
+      this.loadFromUrl(window.location.hash.substring(1));
     }
-  `,
-  uniforms: {
-    cameraPosition: { value: camera.position },
-    globalScale: { value: 1.0 },
-  },
-  blending: THREE.AdditiveBlending,
-  depthTest: false,
-  depthWrite: false,
-  transparent: true,
-  side: THREE.DoubleSide,
-});
-
-
-// Create float32 render target
-const renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
-  type: THREE.FloatType,
-  format: THREE.RedGreenFormat,
-  minFilter: THREE.NearestFilter,
-  magFilter: THREE.NearestFilter,
-  depthBuffer: false,
-  stencilBuffer: false,
-  generateMipmaps: false,
-});
-
-// Fullscreen quad for visualization
-const screenScene = new THREE.Scene();
-const screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-const colormapSize = 256;
-const colormapData = new Uint8Array(colormapSize * 4); // RGBA
-const colormapTexture = new THREE.DataTexture(colormapData, colormapSize, 1, THREE.RGBAFormat);
-
-function setColormap(cmap_name) {
-  // Example: use a 256x1 Inferno colormap array (Uint8Array or Float32Array)
-
-  // Fill with inferno values (example uses d3-scale-chromatic or custom data)
-  for (let i = 0; i < colormapSize; i++) {
-    const t = i / (colormapSize - 1);
-    const v = evaluate_cmap(t, cmap_name, false);
-    colormapData[4*i + 0] = v[0];
-    colormapData[4*i + 1] = v[1];
-    colormapData[4*i + 2] = v[2];
-    colormapData[4*i + 3] = 1.0;
   }
 
-  // Update the colormap texture with the new data
-  colormapTexture.image.data = colormapData;
-  colormapTexture.needsUpdate = true;
-}
-
-// Global toggle: when true, draw a frame
-let needsRender = true;
-let screenQuad, screenMaterial;
-let instancedMesh, qtyValues, weightValues;
-let instancesInFile = 0;
-let countForFps = 10000;
-let controlsInProgress = false;
-
-function setNeedsRender(str) {
-  needsRender = true;
-  if (instancedMesh) {
-    instancedMesh.count = countForFps;
+  createDepthMaterial() {
+    return new THREE.ShaderMaterial({
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        attribute float quantity;
+        attribute float weight;
+        varying vec2 vDataValue;
+        uniform float globalScale;
+        void main() {
+          vec3 scaledPosition = position * globalScale;
+          vec4 worldPosition = modelMatrix * instanceMatrix * vec4(scaledPosition, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          vDataValue = vec2(quantity * weight, weight);
+          vec2 instanceScale = vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
+          vDataValue /= instanceScale.x * instanceScale.y;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vWorldPosition;
+        varying vec2 vDataValue;
+        void main() {
+          float depth = distance(vWorldPosition, cameraPosition);
+          float sign = gl_FrontFacing ? 1.0 : -1.0;
+          float f = sign * depth;
+          gl_FragColor = vec4(f * vDataValue.x, f * vDataValue.y, 0.0, 1.0);
+        }
+      `,
+      uniforms: {
+        cameraPosition: { value: this.camera ? this.camera.position : new THREE.Vector3() },
+        globalScale: { value: 1.0 },
+      },
+      blending: THREE.AdditiveBlending,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      side: THREE.DoubleSide,
+    });
   }
-  console.log("Set needsRender to true", str);
-}
 
-
-function setupScreenMaterial() {
-  if (screenQuad) {
-    screenScene.remove(screenQuad);
-    screenQuad.geometry.dispose();
-    screenQuad.material.dispose();
+  setupColormapSelect() {
+    const colormaps = ['viridis', 'plasma', 'inferno', 'magma', 'cividis'];
+    this.colormapSelect.innerHTML = '';
+    colormaps.forEach(colormap => {
+      const option = document.createElement('option');
+      option.value = colormap;
+      option.textContent = colormap.charAt(0).toUpperCase() + colormap.slice(1);
+      this.colormapSelect.appendChild(option);
+    });
+    this.colormapSelect.value = this.options.colormap;
   }
 
-  screenMaterial = new THREE.ShaderMaterial({
-    vertexShader: `
-      void main() {
-        gl_Position = vec4(position, 1.0);
+  setColormap(cmap_name) {
+    for (let i = 0; i < this.colormapSize; i++) {
+      const t = i / (this.colormapSize - 1);
+      const v = evaluate_cmap(t, cmap_name, false);
+      this.colormapData[4*i + 0] = v[0];
+      this.colormapData[4*i + 1] = v[1];
+      this.colormapData[4*i + 2] = v[2];
+      this.colormapData[4*i + 3] = 1.0;
+    }
+    this.colormapTexture.image.data = this.colormapData;
+    this.colormapTexture.needsUpdate = true;
+    this.updateColorbar();
+    this.setScreenNeedsRender("setColormap");
+  }
+
+  setupScreenMaterial() {
+    if (this.screenQuad) {
+      this.screenScene.remove(this.screenQuad);
+      this.screenQuad.geometry.dispose();
+      this.screenQuad.material.dispose();
+    }
+    this.screenMaterial = new THREE.ShaderMaterial({
+      vertexShader: `
+        void main() {
+          gl_Position = vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D depthTexture;
+        uniform sampler2D colormap;
+        uniform float minVal;
+        uniform float maxVal;
+        void main() {
+          vec2 uv = gl_FragCoord.xy / vec2(${window.innerWidth.toFixed(1)}, ${window.innerHeight.toFixed(1)});
+          float qw = texture2D(depthTexture, uv).r;
+          float w = texture2D(depthTexture, uv).g;
+          float depth = log(qw / w) / log(10.0);
+          float t = clamp((depth - minVal) / (maxVal - minVal), 0.0, 1.0);
+          vec4 color = texture2D(colormap, vec2(t, 0.0));
+          gl_FragColor = vec4(color.rgb, 1);
+        }
+      `,
+      uniforms: {
+        depthTexture: { value: this.renderTarget.texture },
+        colormap: { value: this.colormapTexture },
+        minVal: { value: parseFloat(this.minValInput.value) },
+        maxVal: { value: parseFloat(this.maxValInput.value) }
       }
-    `,
-    fragmentShader: `
-      uniform sampler2D depthTexture;
-      uniform sampler2D colormap;
-      uniform float minVal;
-      uniform float maxVal;
-      void main() {
-        vec2 uv = gl_FragCoord.xy / vec2(${window.innerWidth.toFixed(1)}, ${window.innerHeight.toFixed(1)});
-        float qw = texture2D(depthTexture, uv).r;
-        float w = texture2D(depthTexture, uv).g;
-        float depth = log(qw / w) / log(10.0);
+    });
+    this.screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.screenMaterial);
+    this.screenScene.add(this.screenQuad);
+    this.updateMinMax();
+    this.setNeedsRender("setupScreenMaterial");
+  }
 
-        float t = clamp((depth - minVal) / (maxVal - minVal), 0.0, 1.0);
-        vec4 color = texture2D(colormap, vec2(t, 0.0));
-        gl_FragColor = vec4(color.rgb, 1);
-      }
-    `,
-    uniforms: {
-      depthTexture: { value: renderTarget.texture },
-      colormap: { value: colormapTexture },
-      minVal: { value: -0.0 },
-      maxVal: { value: 4.0 }
+  setNeedsRender(reason) {
+    this.needsRender = true;
+    console.debug("Set needsRender to true", reason);
+  }
+
+  setScreenNeedsRender(reason) {
+    this.needsScreenRender = true;
+    console.debug("Set needsScreenRender to true", reason);
+  }
+
+  animate() {
+    requestAnimationFrame(() => this.animate());
+    this.controls.update();
+    if (!this.needsRender && !this.needsScreenRender) return;
+    const startTime = performance.now();
+    if (this.needsRender) {
+      this.renderer.setRenderTarget(this.renderTarget);
+      this.renderer.clear();
+      this.renderer.render(this.scene, this.camera);
+      this.setScreenNeedsRender("triggered by render")
     }
-  });
 
-  screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), screenMaterial);
-  screenScene.add(screenQuad);
-  updateMinMax();
-  setNeedsRender();
-}
-
-setupScreenMaterial();
-// Call again when window resizes
-window.addEventListener('resize', setupScreenMaterial);
-
-controls.addEventListener('change', () => setNeedsRender("change"));
-controls.addEventListener('start', () => {
-  controlsInProgress = true;
-});
-controls.addEventListener('end', () => {
-  console.log("Controls ended");
-  controlsInProgress = false;
-  setNeedsRender("end");
-});
-
-// Animate
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-
-  if (!needsRender) return;
-
-  // Measure timing
-  const startTime = performance.now();
-
-  // 1st pass: signed depth to float render target
-  renderer.setRenderTarget(renderTarget);
-  renderer.clear();
-  renderer.render(scene, camera);
-  renderer.setRenderTarget(null);
-
-  // 2nd pass: visualize
-  renderer.render(screenScene, screenCamera);
-  const endTime = performance.now();
-
-  const elapsedTime = endTime - startTime;
-  const fps = 1000 / elapsedTime;
-
-  if (instancedMesh && fps < 30) {
-    // We assume the FPS is proportional to the number of instances
-    countForFps = Math.min(Math.max(10000, Math.round(instancedMesh.count / 30 * fps)), instancesInFile);
-    console.log("FPS:", fps, "Instances for 30 FPS:", countForFps);
+    if (this.needsScreenRender) {
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.screenScene, this.screenCamera);
+      this.needsScreenRender = false;
+    }
+    const endTime = performance.now();
+    const elapsedTime = endTime - startTime;
+    const fps = 1000 / elapsedTime;
+    if (this.instancedMesh && this.options.adaptiveResampling && fps < 30) {
+      this.countForFps = Math.min(Math.max(10000, Math.round(this.instancedMesh.count / 30 * fps)), this.instancesInFile);
+    }
+    if (this.instancedMesh && this.instancedMesh.count < this.instancesInFile && this.options.adaptiveResampling) {
+      this.needsRender = true;
+    } else {
+      this.needsRender = false;
+    }
   }
 
-  // Check whether the number of instances is right
-  if (instancedMesh && instancedMesh.count < instancesInFile) {
-    needsRender = true;
-  } else {
-    needsRender = false;
+  addEventListeners() {
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      this.renderer.setSize(w, h);
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      this.renderTarget.setSize(w, h);
+      this.setupScreenMaterial();
+      this.setNeedsRender("resize");
+    });
+
+    this.controls.addEventListener('change', () => this.setNeedsRender("change"));
+    this.controls.addEventListener('start', () => {
+      // Set the number of instances to a fixed value to target smooth FPS
+      if (this.instancedMesh && this.options.adaptiveResampling) 
+        this.instancedMesh.count = this.countForFps;
+
+      this.controlsInProgress = true;
+    });
+    this.controls.addEventListener('end', () => {
+      this.controlsInProgress = false;
+      this.setNeedsRender("end");
+    });
+
+    this.fileInput.addEventListener('change', async (event) => {
+      this.loadFile(event.target.files[0]);
+    });
+
+    this.minValInput.addEventListener('input', () => this.updateMinMax());
+    this.maxValInput.addEventListener('input', () => this.updateMinMax());
+
+    this.colormapSelect.addEventListener('change', (event) => {
+      this.options.colormap = event.target.value;
+      this.setColormap(this.options.colormap);
+    });
+
+    this.adaptiveResamplingCheckbox.addEventListener('change', (event) => {
+      this.options.adaptiveResampling = event.target.checked;
+    });
+
+    this.showColorbarCheckbox.addEventListener('change', (event) => {
+      this.options.showColorbar = event.target.checked;
+      this.updateColorbar();
+    });
+
+    this.loadUrlBtn.addEventListener('click', () => {
+      const url = this.sourceUrlInput.value.trim();
+      if (url) this.loadFromUrl(url);
+    });
+
+    // Adaptive resampling interval
+    setInterval(() => {
+      if (this.instancedMesh && this.instancedMesh.count < this.instancesInFile) {
+        if (this.controlsInProgress) return;
+        this.instancedMesh.count = Math.min(this.instancedMesh.count * 2, this.instancesInFile);
+        this.instancedMesh.instanceMatrix.needsUpdate = true;
+        this.setNeedsRender("adaptiveResampleInterval");
+      }
+    }, 100);
+  }
+
+  updateMinMax() {
+    const minVal = parseFloat(this.minValInput.value);
+    const maxVal = parseFloat(this.maxValInput.value);
+    this.options.zlim = minVal;
+    this.options.zmax = maxVal;
+    if (this.screenMaterial) {
+      this.screenMaterial.uniforms.minVal.value = minVal;
+      this.screenMaterial.uniforms.maxVal.value = maxVal;
+    }
+    this.setScreenNeedsRender("updateMinMax");
+  }
+
+  updateColorbar() {
+    if (this.options.showColorbar) {
+      this.colorbarDiv.style.display = 'block';
+      // Draw colorbar using canvas
+      if (!this.colorbarDiv.firstChild) {
+        const barCanvas = document.createElement('canvas');
+        barCanvas.width = 20;
+        barCanvas.height = 256;
+        this.colorbarDiv.appendChild(barCanvas);
+      }
+      const barCanvas = this.colorbarDiv.firstChild;
+      const ctx = barCanvas.getContext('2d');
+      const imgData = ctx.createImageData(1, 256);
+      for (let i = 0; i < 256; ++i) {
+        const t = 1 - i / 255;
+        const v = evaluate_cmap(t, this.options.colormap, false);
+        imgData.data[i*4+0] = v[0];
+        imgData.data[i*4+1] = v[1];
+        imgData.data[i*4+2] = v[2];
+        imgData.data[i*4+3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      ctx.drawImage(barCanvas, 0, 0, 1, 256, 0, 0, 20, 256);
+    } else {
+      this.colorbarDiv.style.display = 'none';
+    }
+  }
+
+  async loadFile(file) {
+    if (!file) return;
+    const buffer = await file.arrayBuffer();
+    const floatArray = new Float32Array(buffer);
+    const N = floatArray.length / 6;
+    this.instancesInFile = N;
+    const x = floatArray.slice(0, N);
+    const y = floatArray.slice(N, 2 * N);
+    const z = floatArray.slice(2 * N, 3 * N);
+    const dx = floatArray.slice(3 * N, 4 * N);
+    const qtyValues = floatArray.slice(4 * N, 5 * N);
+    const weightValues = floatArray.slice(5 * N, 6 * N);
+    this.loadCubes(x, y, z, dx, qtyValues, weightValues);
+  }
+
+  async loadFromUrl(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch file: " + response.statusText);
+      const file = await response.blob();
+      this.loadFile(file);
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  loadCubes(x, y, z, dx, qtyValues, weightValues) {
+    if (this.instancedMesh) {
+      this.scene.remove(this.instancedMesh);
+      this.instancedMesh.geometry.dispose();
+      this.instancedMesh.material.dispose();
+    }
+    const instanceCount = x.length;
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    this.instancedMesh = new THREE.InstancedMesh(geometry, this.depthMaterial, instanceCount);
+
+    // Random permutation
+    const indices = [...Array(x.length).keys()];
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const dummy = new THREE.Object3D();
+    const newQtyValues = new Float32Array(instanceCount);
+    const newWeightValues = new Float32Array(instanceCount);
+
+    for (let i = 0; i < x.length; ++i) {
+      const idx = indices[i];
+      dummy.position.set(x[idx], y[idx], z[idx]);
+      dummy.scale.set(dx[idx], dx[idx], dx[idx]);
+      dummy.updateMatrix();
+      this.instancedMesh.setMatrixAt(i, dummy.matrix);
+      newQtyValues[i] = qtyValues[idx];
+      newWeightValues[i] = weightValues[idx];
+    }
+    this.instancedMesh.geometry.setAttribute('weight', new THREE.InstancedBufferAttribute(newWeightValues, 1));
+    this.instancedMesh.geometry.setAttribute('quantity', new THREE.InstancedBufferAttribute(newQtyValues, 1));
+    this.instancedMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(this.instancedMesh);
+    this.setNeedsRender("loadCubes");
   }
 }
 
-// Periodically check whether we need to increase the instance count
-setInterval(() => {
-  if (instancedMesh && instancedMesh.count < instancesInFile) {
-    console.log("Increasing instance count to", instancedMesh.count);
-    needsRender = true;
-    // Do not increase the instance count while interacting with the controls
-    if (controlsInProgress) return;
-    instancedMesh.count = Math.min(instancedMesh.count * 2, instancesInFile);
-    // depthMaterial.uniforms.globalScale.value = Math.pow(instancesInFile / instancedMesh.count, 1/3);
-    instancedMesh.instanceMatrix.needsUpdate = true;
-  }
-}, 100);
-
-animate();
-
-// Resize
-window.addEventListener('resize', () => {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
-  renderer.setSize(w, h);
-  camera.aspect = w / h;
-  camera.updateProjectionMatrix();
-
-  renderTarget.setSize(w, h);
-
-  setNeedsRender("resize");
-});
-
-function loadCubes(x, y, z, dx, qtyValues, weightValues) {
-  if (instancedMesh) {
-    scene.remove(instancedMesh);
-    instancedMesh.geometry.dispose();
-    instancedMesh.material.dispose();
-  }
-
-  const instanceCount = x.length;
-  const geometry = new THREE.BoxGeometry(1, 1, 1);
-  instancedMesh = new THREE.InstancedMesh(geometry, depthMaterial, instanceCount);
-
-  // Generate random permutation
-  const indices = [...Array(x.length).keys()];
-  for (let i = indices.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [indices[i], indices[j]] = [indices[j], indices[i]];
-  }
-
-  const dummy = new THREE.Object3D();
-
-  const newQtyValues = new Float32Array(instanceCount);
-  const newWeightValues = new Float32Array(instanceCount);
-
-  // Fill in the instances
-  for (let i = 0; i < x.length; ++i) {
-    const idx = indices[i];
-    dummy.position.set(x[idx], y[idx], z[idx]);
-    dummy.scale.set(dx[idx], dx[idx], dx[idx]);
-    dummy.updateMatrix();
-    instancedMesh.setMatrixAt(i, dummy.matrix);
-
-    // Store the quantity and weight values
-    newQtyValues[i] = qtyValues[idx];
-    newWeightValues[i] = weightValues[idx];
-  }
-
-  // Add the values as attributes to the geometry
-  const weightValueAttribute = new THREE.InstancedBufferAttribute(newWeightValues, 1);
-  instancedMesh.geometry.setAttribute('weight', weightValueAttribute);
-  const qtyValuesAttribute = new THREE.InstancedBufferAttribute(newQtyValues, 1);
-  instancedMesh.geometry.setAttribute('quantity', qtyValuesAttribute);
-
-  // Update the instanced mesh to reflect the new attributes
-  instancedMesh.instanceMatrix.needsUpdate = true;
-
-  scene.add(instancedMesh);
-  setNeedsRender("loadCubes");
-}
-
-async function load_file(file) {
-  // const file = event.target.files[0];
-  if (!file) return;
-
-  const buffer = await file.arrayBuffer();
-  const floatArray = new Float32Array(buffer);
-  const N = floatArray.length / 6;
-  instancesInFile = N;
-
-  const x = floatArray.slice(0, N);
-  const y = floatArray.slice(N, 2 * N);
-  const z = floatArray.slice(2 * N, 3 * N);
-  const dx = floatArray.slice(3 * N, 4 * N);
-  const qtyValues = floatArray.slice(4 * N, 5 * N);
-  const weightValues = floatArray.slice(5 * N, 6 * N);
-
-  console.log("Got an array of length", N);
-
-  loadCubes(x, y, z, dx, qtyValues, weightValues);
-}
-;
-document.getElementById('fileInput').addEventListener('change', async (event) => {
-  load_file(event.target.files[0]);
-  
-});
-
-function updateMinMax() {
-  const minVal = parseFloat(document.getElementById('minVal').value);
-  const maxVal = parseFloat(document.getElementById('maxVal').value);
-  screenMaterial.uniforms.minVal.value = minVal;
-  screenMaterial.uniforms.maxVal.value = maxVal;
-  setNeedsRender("updateMinMax");
-}
-document.getElementById('minVal').addEventListener('input', (event) => {
-  updateMinMax();
-});
-document.getElementById('maxVal').addEventListener('input', (event) => {
-  updateMinMax();
-});
-
-// Populate colormap dropdown
-const colormapSelect = document.getElementById('colormap');
-const colormaps = ['viridis', 'plasma', 'inferno', 'magma', 'cividis'];
-
-colormaps.forEach(colormap => {
-  const option = document.createElement('option');
-  option.value = colormap;
-  option.textContent = colormap.charAt(0).toUpperCase() + colormap.slice(1);
-  colormapSelect.appendChild(option);
-});
-
-
-// Watch for changes
-document.getElementById('colormap').addEventListener('change', (event) => {
-  setColormap(event.target.value);
-});
-
-// Set default colormap selection
-setColormap('magma');
-colormapSelect.value = 'magma';
-updateMinMax();
-
-async function load_from_url(url) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    console.error("Failed to fetch file:", response.statusText);
-    return;
-  }
-  const file = await response.blob(); // Await the blob response
-  load_file(file);
-}
-// If the current URL ends with "#<filename>", load that file from URL
-if (window.location.hash.startsWith("#") && window.location.hash.length > 1) {
-  const filename = window.location.hash.substring(1);
-  // Logic to load the file using the filename
-  console.log("Loading file from URL:", filename);
-  load_from_url(filename);
-}
+// Instantiate the renderer
+const rendererApp = new VolumeRenderer();
 
 </script>
-<input type="file" id="fileInput" accept=".bin" />
-<input type="float" id="minVal" value="-3.0" step="0.1" />
-<input type="float" id="maxVal" value="2.0" step="0.1" />
-<select id="colormap"></select>
 </body>
 </html>
