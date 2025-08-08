@@ -30,7 +30,7 @@ repos:
         additional_dependencies: [black==23.9.1]
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.12.2
+  rev: v0.12.7
   hooks:
   - id: ruff
     args: [--fix]
