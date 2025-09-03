@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 import unyt
 from numpy.testing import assert_equal
+from yt.data_objects.construction_data_containers import YTArbitraryGrid
 from yt.testing import fake_amr_ds, requires_module
 
 from yt_experiments.tiled_grid import (
@@ -105,3 +106,20 @@ def test_arbitrary_grid_to_xarray():
     vals = tag.to_xarray(("stream", "Density"))
     assert isinstance(vals, xr.DataArray)
     assert hasattr(vals, "coords")
+
+
+def test_arbitrary_grid_index_selection():
+    ds = fake_amr_ds()
+    tag = YTTiledArbitraryGrid(
+        ds.domain_left_edge,
+        ds.domain_right_edge,
+        (20, 20, 20),
+        5,
+        ds=ds,
+    )
+    print(tag.chunks)
+    ag = tag.single_arbitrary_grid(0)
+    assert isinstance(ag, YTArbitraryGrid)
+
+    vals = ag["stream", "Density"]
+    assert vals.shape == (5, 5, 5)

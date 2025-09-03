@@ -192,8 +192,20 @@ class YTTiledArbitraryGrid:
         Parameters
         ----------
         igrid
+            the index of the arbitrary grid to select
         field
+            the field to select
         ops
+            an optional list of callback functions to apply to the
+            sampled field. Must accept a single parameter, the values
+            of the sampled field for each grid, and return the modified
+            values of the grid. Operations are by-grid. For example:
+
+                def my_func(values):
+                    modified_values = np.abs(values)
+                    return modified_values
+
+                ops = [my_func, ]
 
         Returns
         -------
@@ -211,6 +223,22 @@ class YTTiledArbitraryGrid:
         for op in ops:
             vals = op(vals)
         return vals, slc
+
+    def single_arbitrary_grid(self, igrid: int) -> YTArbitraryGrid:
+        """get an arbitrary grid object handle for one of the grids in the tiled grid object
+
+        Parameters
+        ----------
+        igrid
+            the index of the arbitrary grid to select
+
+        Returns
+        -------
+        YTArbitraryGrid
+            the arbitrary grid for the selected tiled grid index
+        """
+        _, _, le, re, _, shp = self._get_grid(igrid)
+        return _get_arbitrary_grid(le, re, shp, self.ds, self.field_parameters)
 
     def to_array(
         self,
@@ -505,6 +533,16 @@ class YTArbitraryGridOctPyramid(YTArbitraryGridPyramid):
         return np.asarray(input_factor, dtype=int)
 
 
+def _get_arbitrary_grid(
+    le: npt.NDArray,
+    re: npt.NDArray,
+    shp: npt.NDArray,
+    ds: Dataset,
+    field_parameters: Any,
+):
+    return YTArbitraryGrid(le, re, shp, ds=ds, field_parameters=field_parameters)
+
+
 def _get_filled_grid(
     le: npt.NDArray,
     re: npt.NDArray,
@@ -513,6 +551,6 @@ def _get_filled_grid(
     ds: Dataset,
     field_parameters: Any,
 ) -> npt.NDArray:
-    grid = YTArbitraryGrid(le, re, shp, ds=ds, field_parameters=field_parameters)
+    grid = _get_arbitrary_grid(le, re, shp, ds=ds, field_parameters=field_parameters)
     vals = grid[field]
     return vals
