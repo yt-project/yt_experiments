@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-
 from yt_experiments.octree.converter import OctTree
 
 test_data = (
