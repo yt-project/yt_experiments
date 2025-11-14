@@ -93,7 +93,7 @@ jobs:
           path: wheelhouse/*.whl
 
   create_gh_draft_release:
-    needs: [build_wheels, make_sdist]
+    needs: [build_wheels, build_pyodide, make_sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
