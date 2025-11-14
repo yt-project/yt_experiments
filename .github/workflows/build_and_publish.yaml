@@ -87,7 +87,9 @@ jobs:
       - name: Upload pyodide wheels
         uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels-pyodide
+          # Note: we prepend "no-pypi-" to avoid this artifact being
+          # included in the PyPI upload step.
+          name: no-pypi-cibw-wheels-pyodide
           path: wheelhouse/*.whl
 
   create_gh_draft_release:
