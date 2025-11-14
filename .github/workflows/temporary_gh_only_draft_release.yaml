@@ -100,4 +100,4 @@ jobs:
           tag: ${{ github.ref }}
           prerelease: false
           name: Release ${{ github.ref }}
-          artifacts: "*cibw*"
+          artifacts: "*cibw*/*.whl,.cibw-sdist/*.tar.gz"
