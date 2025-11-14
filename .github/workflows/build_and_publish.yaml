@@ -66,8 +66,34 @@ jobs:
           name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
           path: wheelhouse/*.whl
 
+  build_pyodide:
+    name: Wheel (pyodide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build pyodide wheels
+        uses: pypa/cibuildwheel@v2.21
+        env:
+          # Tell cibuildwheel to build for pyodide (WASM)
+          CIBW_PLATFORM: pyodide
+          # Optional: build all pyodide wheel tags
+          CIBW_BUILD: '*'
+          # Ensure output lands in wheelhouse
+          CIBW_OUTPUT_DIR: wheelhouse
+
+      - name: Upload pyodide wheels
+        uses: actions/upload-artifact@v4
+        with:
+          # Note: we prepend "no-pypi-" to avoid this artifact being
+          # included in the PyPI upload step.
+          name: no-pypi-cibw-wheels-pyodide
+          path: wheelhouse/*.whl
+
   create_gh_draft_release:
-    needs: [build_wheels, make_sdist]
+    needs: [build_wheels, build_pyodide, make_sdist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
