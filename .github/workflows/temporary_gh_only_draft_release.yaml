@@ -1,0 +1,100 @@
+# based off the cookiecutter action provided by https://github.com/scientific-python/cookie
+name: draftReleaseWithWheels
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Many color libraries just need this to be set to any value, but at least
+  # one distinguishes color depth, where "3" -> "256-bit color".
+  FORCE_COLOR: 3
+
+jobs:
+  make_sdist:
+    name: Make SDist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build SDist
+        run: pipx run build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  build_wheels:
+    name: Wheel on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [
+          ubuntu-22.04,
+          windows-2022,
+          macos-13, # x86_64
+          macos-14, # arm64
+        ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.21
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          path: wheelhouse/*.whl
+
+  build_pyodide:
+    name: Wheel (pyodide)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build pyodide wheels
+        uses: pypa/cibuildwheel@v2.21
+        env:
+          # Tell cibuildwheel to build for pyodide (WASM)
+          CIBW_PLATFORM: pyodide
+          # Optional: build all pyodide wheel tags
+          CIBW_BUILD: '*'
+          # Ensure output lands in wheelhouse
+          CIBW_OUTPUT_DIR: wheelhouse
+
+      - name: Upload pyodide wheels
+        uses: actions/upload-artifact@v4
+        with:
+          # Note: we prepend "no-pypi-" to avoid this artifact being
+          # included in the PyPI upload step.
+          name: no-pypi-cibw-wheels-pyodide
+          path: wheelhouse/*.whl
+
+  create_gh_draft_release:
+    needs: [build_wheels, build_pyodide, make_sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          draft: true
+          tag: ${{ github.ref }}
+          prerelease: false
+          name: Release ${{ github.ref }}
+          artifacts: "*wheels*"
