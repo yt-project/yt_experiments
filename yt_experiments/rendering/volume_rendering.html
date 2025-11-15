@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Three.js Cube Collection with Controls</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    #colorbar {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      width: 20px;
+      height: 256px;
+      background: linear-gradient(to top, #000, #fff);
+      border: 1px solid #888;
+      display: none;
+    }
+    #controls {
+      position: absolute;
+      left: 10px;
+      top: 10px;
+      background: rgba(255,255,255,0.8);
+      padding: 10px;
+      border-radius: 6px;
+    }
+  </style>
+</head>
+<body>
+<div id="controls">
+  <input type="file" id="fileInput" accept=".bin" />
+  <input type="float" id="minVal" value="-3.0" step="0.1" />
+  <input type="float" id="maxVal" value="2.0" step="0.1" />
+  <select id="colormap"></select>
+  <label>
+    <input type="checkbox" id="adaptiveResampling" checked>
+    Adaptive Resampling
+  </label>
+  <label>
+    <input type="checkbox" id="showColorbar" checked>
+    Colorbar
+  </label>
+  <input type="text" id="sourceUrl" placeholder="Source URL" style="width: 200px;">
+  <button id="loadUrlBtn">Load URL</button>
+  <input type="file" id="positionFileInput" accept="*" />
+  <label for="positionFileInput">Position File</label>
+</div>
+<canvas id="three-canvas"></canvas>
+<div id="colorbar"></div>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.175.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.175.0/examples/jsm/"
+  }
+}
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha512-XMVd28F1oH/O71fzwBnV7HucLxVwtxf26XV8P4wPk26EDxuGZ91N8bsOttmnomcCD3CS5ZMRL50H0GgOHvegtg==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="js-colormaps.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+class VolumeRenderer {
+  constructor(options = {}) {
+    // Options
+    this.options = {
+      adaptiveResampling: options.adaptiveResampling ?? true,
+      showColorbar: options.showColorbar ?? true,
+      source: options.source ?? null,
+      zlim: options.zlim ?? -3.0,
+      zmax: options.zmax ?? 2.0,
+      colormap: options.colormap ?? 'magma',
+      positionFile: options.positionFile ?? null,
+    };
+
+    // DOM
+    this.canvas = document.getElementById('three-canvas');
+    this.colorbarDiv = document.getElementById('colorbar');
+    this.controlsDiv = document.getElementById('controls');
+    this.fileInput = document.getElementById('fileInput');
+    this.minValInput = document.getElementById('minVal');
+    this.maxValInput = document.getElementById('maxVal');
+    this.colormapSelect = document.getElementById('colormap');
+    this.adaptiveResamplingCheckbox = document.getElementById('adaptiveResampling');
+    this.showColorbarCheckbox = document.getElementById('showColorbar');
+    this.sourceUrlInput = document.getElementById('sourceUrl');
+    this.loadUrlBtn = document.getElementById('loadUrlBtn');
+    this.positionFileInput = document.getElementById('positionFileInput');
+
+    // Three.js setup
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(1);
+
+    if (!this.renderer.capabilities.isWebGL2 || !this.renderer.extensions.get('EXT_color_buffer_float') || !this.renderer.extensions.get("EXT_float_blend")) {
+      alert("Your browser doesn't support floating point render targets.");
+    }
+
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 100);
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls.enableDamping = true;
+    this.controls.dampingFactor = 0.5;
+    this.camera.position.set(0.5, 0.5, 5);
+
+    // Shader, render target, etc.
+    this.colormapSize = 256;
+    this.colormapData = new Uint8Array(this.colormapSize * 4);
+    this.colormapTexture = new THREE.DataTexture(this.colormapData, this.colormapSize, 1, THREE.RGBAFormat);
+
+    this.depthMaterial = this.createDepthMaterial();
+    this.renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
+      type: THREE.FloatType,
+      format: THREE.RedGreenFormat,
+      minFilter: THREE.NearestFilter,
+      magFilter: THREE.NearestFilter,
+      depthBuffer: false,
+      stencilBuffer: false,
+      generateMipmaps: false,
+    });
+
+    this.screenScene = new THREE.Scene();
+    this.screenCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    this.screenMaterial = null;
+    this.screenQuad = null;
+    this.instancedMesh = null;
+    this.instancesInFile = 0;
+    this.countForFps = 10000;
+    this.controlsInProgress = false;
+    this.needsRender = true;  // True if the whole scene needs to be rendered
+    this.needsScreenRender = true;  // True if the screen quad needs to be rendered
+
+    this.setupColormapSelect();
+    this.setColormap(this.options.colormap);
+    this.setupScreenMaterial();
+    this.addEventListeners();
+    this.animate();
+    this.updateColorbar();
+
+    // Load from hash if present
+    if (window.location.hash.startsWith("#") && window.location.hash.length > 1) {
+      this.loadFromUrl(window.location.hash.substring(1));
+    }
+  }
+
+  createDepthMaterial() {
+    return new THREE.ShaderMaterial({
+      vertexShader: `
+        varying vec3 vWorldPosition;
+        attribute float quantity;
+        attribute float weight;
+        varying vec2 vDataValue;
+        uniform float globalScale;
+        void main() {
+          vec3 scaledPosition = position * globalScale;
+          vec4 worldPosition = modelMatrix * instanceMatrix * vec4(scaledPosition, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          vDataValue = vec2(quantity * weight, weight);
+          vec2 instanceScale = vec2(length(instanceMatrix[0].xyz), length(instanceMatrix[1].xyz));
+          vDataValue /= instanceScale.x * instanceScale.y;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vWorldPosition;
+        varying vec2 vDataValue;
+        void main() {
+          float depth = distance(vWorldPosition, cameraPosition);
+          float sign = gl_FrontFacing ? 1.0 : -1.0;
+          float f = sign * depth;
+          gl_FragColor = vec4(f * vDataValue.x, f * vDataValue.y, 0.0, 1.0);
+        }
+      `,
+      uniforms: {
+        cameraPosition: { value: this.camera ? this.camera.position : new THREE.Vector3() },
+        globalScale: { value: 1.0 },
+      },
+      blending: THREE.AdditiveBlending,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      side: THREE.DoubleSide,
+    });
+  }
+
+  setupColormapSelect() {
+    const colormaps = ['viridis', 'plasma', 'inferno', 'magma', 'cividis'];
+    this.colormapSelect.innerHTML = '';
+    colormaps.forEach(colormap => {
+      const option = document.createElement('option');
+      option.value = colormap;
+      option.textContent = colormap.charAt(0).toUpperCase() + colormap.slice(1);
+      this.colormapSelect.appendChild(option);
+    });
+    this.colormapSelect.value = this.options.colormap;
+  }
+
+  setColormap(cmap_name) {
+    for (let i = 0; i < this.colormapSize; i++) {
+      const t = i / (this.colormapSize - 1);
+      const v = evaluate_cmap(t, cmap_name, false);
+      this.colormapData[4*i + 0] = v[0];
+      this.colormapData[4*i + 1] = v[1];
+      this.colormapData[4*i + 2] = v[2];
+      this.colormapData[4*i + 3] = 1.0;
+    }
+    this.colormapTexture.image.data = this.colormapData;
+    this.colormapTexture.needsUpdate = true;
+    this.updateColorbar();
+    this.setScreenNeedsRender("setColormap");
+  }
+
+  setupScreenMaterial() {
+    if (this.screenQuad) {
+      this.screenScene.remove(this.screenQuad);
+      this.screenQuad.geometry.dispose();
+      this.screenQuad.material.dispose();
+    }
+    this.screenMaterial = new THREE.ShaderMaterial({
+      vertexShader: `
+        void main() {
+          gl_Position = vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform sampler2D depthTexture;
+        uniform sampler2D colormap;
+        uniform float minVal;
+        uniform float maxVal;
+        void main() {
+          vec2 uv = gl_FragCoord.xy / vec2(${window.innerWidth.toFixed(1)}, ${window.innerHeight.toFixed(1)});
+          float qw = texture2D(depthTexture, uv).r;
+          float w = texture2D(depthTexture, uv).g;
+          float depth = log(qw / w) / log(10.0);
+          float t = clamp((depth - minVal) / (maxVal - minVal), 0.0, 1.0);
+          vec4 color = texture2D(colormap, vec2(t, 0.0));
+          gl_FragColor = vec4(color.rgb, 1);
+        }
+      `,
+      uniforms: {
+        depthTexture: { value: this.renderTarget.texture },
+        colormap: { value: this.colormapTexture },
+        minVal: { value: parseFloat(this.minValInput.value) },
+        maxVal: { value: parseFloat(this.maxValInput.value) }
+      }
+    });
+    this.screenQuad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.screenMaterial);
+    this.screenScene.add(this.screenQuad);
+    this.updateMinMax();
+    this.setNeedsRender("setupScreenMaterial");
+  }
+
+  setNeedsRender(reason) {
+    this.needsRender = true;
+    console.debug("Set needsRender to true", reason);
+  }
+
+  setScreenNeedsRender(reason) {
+    this.needsScreenRender = true;
+    console.debug("Set needsScreenRender to true", reason);
+  }
+
+  animate() {
+    requestAnimationFrame(() => this.animate());
+    this.controls.update();
+    if (!this.needsRender && !this.needsScreenRender) return;
+    const startTime = performance.now();
+    if (this.needsRender) {
+      this.renderer.setRenderTarget(this.renderTarget);
+      this.renderer.clear();
+      this.renderer.render(this.scene, this.camera);
+      this.setScreenNeedsRender("triggered by render")
+    }
+
+    if (this.needsScreenRender) {
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.screenScene, this.screenCamera);
+      this.needsScreenRender = false;
+    }
+    const endTime = performance.now();
+    const elapsedTime = endTime - startTime;
+    const fps = 1000 / elapsedTime;
+    if (this.instancedMesh && this.options.adaptiveResampling && fps < 30) {
+      this.countForFps = Math.min(Math.max(10000, Math.round(this.instancedMesh.count / 30 * fps)), this.instancesInFile);
+    }
+    if (this.instancedMesh && this.instancedMesh.count < this.instancesInFile && this.options.adaptiveResampling) {
+      this.needsRender = true;
+    } else {
+      this.needsRender = false;
+    }
+  }
+
+  addEventListeners() {
+    window.addEventListener('resize', () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      this.renderer.setSize(w, h);
+      this.camera.aspect = w / h;
+      this.camera.updateProjectionMatrix();
+      this.renderTarget.setSize(w, h);
+      this.setupScreenMaterial();
+      this.setNeedsRender("resize");
+    });
+
+    this.controls.addEventListener('change', () => this.setNeedsRender("change"));
+    this.controls.addEventListener('start', () => {
+      // Set the number of instances to a fixed value to target smooth FPS
+      if (this.instancedMesh && this.options.adaptiveResampling) 
+        this.instancedMesh.count = this.countForFps;
+
+      this.controlsInProgress = true;
+    });
+    this.controls.addEventListener('end', () => {
+      this.controlsInProgress = false;
+      this.setNeedsRender("end");
+    });
+
+    this.fileInput.addEventListener('change', async (event) => {
+      this.loadFile(event.target.files[0]);
+    });
+
+    this.minValInput.addEventListener('input', () => this.updateMinMax());
+    this.maxValInput.addEventListener('input', () => this.updateMinMax());
+
+    this.colormapSelect.addEventListener('change', (event) => {
+      this.options.colormap = event.target.value;
+      this.setColormap(this.options.colormap);
+    });
+
+    this.adaptiveResamplingCheckbox.addEventListener('change', (event) => {
+      this.options.adaptiveResampling = event.target.checked;
+    });
+
+    this.showColorbarCheckbox.addEventListener('change', (event) => {
+      this.options.showColorbar = event.target.checked;
+      this.updateColorbar();
+    });
+
+    this.loadUrlBtn.addEventListener('click', () => {
+      const url = this.sourceUrlInput.value.trim();
+      if (url) this.loadFromUrl(url);
+    });
+
+    this.positionFileInput.addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      // Parse the file as camera.x, camera.y, camera.z, camera.focus.x, camera.focus.y, camera.focus.z
+      const text = await file.text();
+      const lines = text.split('\n');
+
+      const cameraViews = lines.map(element => {
+        const values = element.split(' ').map(Number);
+        if (values.length === 9) {
+          return {
+            position: values.slice(0, 3),
+            focus: values.slice(3, 6),
+            north: values.slice(6, 9),
+          };
+        }
+      }).filter((element) => element !== undefined);
+
+      this.renderCameraSequence(cameraViews).then(() => {
+        // Save the frames to a zip file
+        const zip = new JSZip();
+        const folder = zip.folder("frames");
+        this.frameBuffer.forEach((dataURL, i) => {
+          const base64Data = dataURL.split(',')[1];
+          const binaryString = atob(base64Data);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let j = 0; j < len; j++) {
+            bytes[j] = binaryString.charCodeAt(j);
+          }
+
+          // Add file as "frame_XXX.png"
+          const istr = i.toString().padStart(3, '0');
+          folder.file(`frame_${istr}.png`, bytes, { base64: true });
+        });
+
+        
+        zip.generateAsync({ type: "blob" }).then((content) => {
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(content);
+          a.download = "frames.zip";
+          a.click();
+        });
+        console.log("Camera sequence completed");
+
+        // Clear the frame buffer
+        this.frameBuffer = [];
+      });
+    });
+
+    // Adaptive resampling interval
+    setInterval(() => {
+      if (this.instancedMesh && this.instancedMesh.count < this.instancesInFile) {
+        if (this.controlsInProgress) return;
+        this.instancedMesh.count = Math.min(this.instancedMesh.count * 2, this.instancesInFile);
+        this.instancedMesh.instanceMatrix.needsUpdate = true;
+        this.setNeedsRender("adaptiveResampleInterval");
+      }
+    }, 100);
+  }
+
+  updateMinMax() {
+    const minVal = parseFloat(this.minValInput.value);
+    const maxVal = parseFloat(this.maxValInput.value);
+    this.options.zlim = minVal;
+    this.options.zmax = maxVal;
+    if (this.screenMaterial) {
+      this.screenMaterial.uniforms.minVal.value = minVal;
+      this.screenMaterial.uniforms.maxVal.value = maxVal;
+    }
+    this.setScreenNeedsRender("updateMinMax");
+  }
+
+  updateColorbar() {
+    if (this.options.showColorbar) {
+      this.colorbarDiv.style.display = 'block';
+      // Draw colorbar using canvas
+      if (!this.colorbarDiv.firstChild) {
+        const barCanvas = document.createElement('canvas');
+        barCanvas.width = 20;
+        barCanvas.height = 256;
+        this.colorbarDiv.appendChild(barCanvas);
+      }
+      const barCanvas = this.colorbarDiv.firstChild;
+      const ctx = barCanvas.getContext('2d');
+      const imgData = ctx.createImageData(1, 256);
+      for (let i = 0; i < 256; ++i) {
+        const t = 1 - i / 255;
+        const v = evaluate_cmap(t, this.options.colormap, false);
+        imgData.data[i*4+0] = v[0];
+        imgData.data[i*4+1] = v[1];
+        imgData.data[i*4+2] = v[2];
+        imgData.data[i*4+3] = 255;
+      }
+      ctx.putImageData(imgData, 0, 0);
+      ctx.drawImage(barCanvas, 0, 0, 1, 256, 0, 0, 20, 256);
+    } else {
+      this.colorbarDiv.style.display = 'none';
+    }
+  }
+
+  async loadFile(file) {
+    if (!file) return;
+    const buffer = await file.arrayBuffer();
+    const floatArray = new Float32Array(buffer);
+    const N = floatArray.length / 6;
+    this.instancesInFile = N;
+    const x = floatArray.slice(0, N);
+    const y = floatArray.slice(N, 2 * N);
+    const z = floatArray.slice(2 * N, 3 * N);
+    const dx = floatArray.slice(3 * N, 4 * N);
+    const qtyValues = floatArray.slice(4 * N, 5 * N);
+    const weightValues = floatArray.slice(5 * N, 6 * N);
+    this.loadCubes(x, y, z, dx, qtyValues, weightValues);
+  }
+
+  async loadFromUrl(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error("Failed to fetch file: " + response.statusText);
+      const file = await response.blob();
+      this.loadFile(file);
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  loadCubes(x, y, z, dx, qtyValues, weightValues) {
+    if (this.instancedMesh) {
+      this.scene.remove(this.instancedMesh);
+      this.instancedMesh.geometry.dispose();
+      this.instancedMesh.material.dispose();
+    }
+    const instanceCount = x.length;
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    this.instancedMesh = new THREE.InstancedMesh(geometry, this.depthMaterial, instanceCount);
+
+    // Random permutation
+    const indices = [...Array(x.length).keys()];
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    const dummy = new THREE.Object3D();
+    const newQtyValues = new Float32Array(instanceCount);
+    const newWeightValues = new Float32Array(instanceCount);
+
+    for (let i = 0; i < x.length; ++i) {
+      const idx = indices[i];
+      dummy.position.set(x[idx], y[idx], z[idx]);
+      dummy.scale.set(dx[idx], dx[idx], dx[idx]);
+      dummy.updateMatrix();
+      this.instancedMesh.setMatrixAt(i, dummy.matrix);
+      newQtyValues[i] = qtyValues[idx];
+      newWeightValues[i] = weightValues[idx];
+    }
+    this.instancedMesh.geometry.setAttribute('weight', new THREE.InstancedBufferAttribute(newWeightValues, 1));
+    this.instancedMesh.geometry.setAttribute('quantity', new THREE.InstancedBufferAttribute(newQtyValues, 1));
+    this.instancedMesh.instanceMatrix.needsUpdate = true;
+    this.scene.add(this.instancedMesh);
+    this.setNeedsRender("loadCubes");
+  }
+
+  async renderCameraSequence(cameraViews) {
+    // Store the current adaptive resampling option
+    const oldAdaptiveResampling = this.options.adaptiveResampling;
+    const oldPosition = this.camera.position.clone();
+    const oldTarget = this.controls.target.clone();
+    this.options.adaptiveResampling = false;
+    this.frameBuffer = [];
+    for (const view of cameraViews) {
+      // Set camera position and focus
+      this.camera.position.set(...view.position);
+      this.camera.up.set(...view.north);
+      this.controls.target.set(...view.focus);
+      this.camera.updateProjectionMatrix();
+      this.controls.update();
+
+      // Force render
+      this.setNeedsRender("renderCameraSequence");
+      this.setScreenNeedsRender("renderCameraSequence");
+
+      // Wait for the next animation frame to ensure rendering is done
+      await new Promise(requestAnimationFrame);
+
+      // // Render the scene to the screen
+      // this.renderer.setRenderTarget(null);
+      // this.renderer.render(this.screenScene, this.screenCamera);
+
+      // Read the canvas as a data URL (PNG)
+      const dataURL = this.canvas.toDataURL("image/png");
+      this.frameBuffer.push(dataURL);
+    }
+
+    // Restore adaptive resampling option
+    this.options.adaptiveResampling = oldAdaptiveResampling;
+    this.camera.position.copy(oldPosition);
+    this.controls.target.copy(oldTarget);
+  }
+}
+
+// Instantiate the renderer
+const rendererApp = new VolumeRenderer();
+
+
+</script>
+</body>
+</html>
