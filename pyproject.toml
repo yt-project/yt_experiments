@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel", "Cython>=3.0.3", "numpy>=2.0"]
+requires = ["setuptools>=77.0", "wheel", "Cython>=3.0.3", "numpy>=2.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -15,10 +15,11 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: OSI Approved :: BSD License",
 ]
 dependencies=['yt>4.2.0', 'numpy']
 dynamic = ["version"]
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 
 [tool.setuptools.dynamic]
 version = {attr = "yt_experiments.__version__"}
@@ -32,8 +33,6 @@ content-type = "text/markdown"
 "Homepage" = "https://github.com/yt-project/yt_experiments"
 "Bug Tracker" = "https://github.com/yt-project/yt_experiments/issues"
 
-[project.license]
-text = "BSD 3-Clause"
 
 [project.optional-dependencies]
 test = [
