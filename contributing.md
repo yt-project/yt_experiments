@@ -48,15 +48,15 @@ And push it upstream
 git push upstream v2.1.3
 ```
 
-This will trigger the `build_and_publish.yaml` and `run_tests.yaml` actions. If
-`build_and_publish.yaml` succeeds in building the sdist and wheels, then a new
-github release draft will be created (but the release will not be pushed to pypi
-yet!).
+This will trigger the `build_and_publish.yaml` and `run_tests.yaml` actions.
+`build_and_publish.yaml` builds the sdist and wheels, then uploads them to pypi.
+If the pypi upload succeeds, a draft github release is created with the sdist
+and wheels attached (including the pyodide wheel, which is not uploaded to pypi).
 
 Next, go to the [release page](https://github.com/yt-project/yt_experiments/releases),
-open up the draft release, edit the title and write up the release notes. When ready,
-hit publish -- this will again trigger the `build_and_publish.yaml` action, but this
-time it will push up to pypi on success.
+open up the draft release, add a short description of the release under the
+version heading and double check the auto-generated release notes. When ready, hit
+publish. Note that publishing the github release does not trigger any further
+actions: the package is already on pypi at this point.
 
-Note that the pypi publication configuration is setup via a [Trusted Publisher](https://docs.pypi.org/trusted-publishers/)
-under @chrishavlin's pypi account (chavlin).
+Note that the pypi publication configuration is setup via a [Trusted Publisher](https://docs.pypi.org/trusted-publishers/).
